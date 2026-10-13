@@ -66,6 +66,7 @@ for(const s of [MARKER+'\n<!-- head: '+'a'.repeat(40)+' -->\nok','<!-- head: sho
 // path and never the file it points at, a file over the cap is cut, and anything past the budget is named.
 const t=fileText(['small.json','binary.bin','absent/x.js','link']);
 assert(t.text.includes('"hello"'),'a text file is inlined');
+assert(t.text.includes('### small.json (as changed by this PR)'),'inlined files are labelled as the PR version, not the brief');
 assert(t.text.includes('not shown: absent/x.js (unreadable), binary.bin (binary)'),'skipped files are named with a reason');
 assert(!t.text.includes('TOP SECRET'),'a symlink is not followed');
 assert(t.text.includes(secret),'a symlink shows as its target path');
@@ -130,7 +131,7 @@ assert.match(decide([rev(sha,'REQUEST_CHANGES')],sha),/did not approve/);
 assert.match(decide([MARKER+'\nVERDICT: APPROVE'],sha),/older commit/,'a review with no head line does not count');
 // Which commands the hook inspects at all: null lets it through; a throw refuses it; a target is checked.
 const H=sha,M='--match-head-commit '+H;
-for(const m of ['gh pr view 5','gh pr list','gh pr view 5 --json mergeable,mergeStateStatus','gh pr list --search merge',
+for(const m of ['gh pr view 5','gh pr list','gh pr view 5 --json mergeable,mergeStateStatus','gh pr list --search merge','gh api repos/o/r/pulls/5 --jq .mergeable,.merge_state_status',
  'gh pr list --search "merge me"','gh pr checks 83 --json name,merge','gh api repos/o/r/pulls/5','git merge main','echo merge','ls'])
  assert.equal(inspect(m),null,'let through: '+m);
 for(const m of ['gh pr -R o/r merge 5 '+M,'gh pr --squash merge 5 -R o/r '+M,'gh api -X PUT repos/o/r/pulls/5/merge','-Ogh pr merge 5 -R o/r '+M,

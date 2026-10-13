@@ -20,7 +20,7 @@ const verdictOf=review=>{const all=[...review.matchAll(VERDICT)].map(m=>m[1]);re
 // `gh pr view|list|checks|diff|status` call with no shell operators passes (`--json mergeable`, `--search merge`);
 // everything else must be the exact plain `gh pr merge` form target() reads, or it is refused. Fail closed: a mention
 // in text gates the call too, since text can be written somewhere that runs.
-const MENTION=/gh\b[\s\S]*\bpr\b[\s\S]*merge|gh\b[\s\S]*\bapi\b[\s\S]*merge/;
+const MENTION=/gh\b[\s\S]*\bpr\b[\s\S]*merge|gh\b[\s\S]*\bapi\b[\s\S]*\/merge\b/; // api: the merge endpoint, not --jq .mergeable
 const READ_ONLY=/^\s*gh\s+pr\s+(view|list|checks|diff|status)\b[^;&|`$()<>\n]*$/;
 const joined=command=>command.replace(/\\\r?\n/g,''); // deleted outright, as bash does: me\<newline>rge is merge
 // A gh pr/api command whose words the shell builds at run time ($var, $(…), `…`, eval, $'\x6d' escapes) could spell
