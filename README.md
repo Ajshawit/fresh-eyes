@@ -199,8 +199,9 @@ Limits you should know about:
   only to the review job, as in the quick start.
 - The hook inspects any Bash command that mentions `gh`, `pr` or `api`, and `merge`, after stripping quotes and
   joining line continuations. A single read-only `gh pr view|list|checks|diff|status` call passes; anything else must
-  be the exact plain merge form or it is refused, so `gh pr create --title "… merge …"` is refused too. Use the file
-  tools for prose that mentions the command. A merge from the web UI,
+  be the exact plain merge form or it is refused, so `gh pr create --title "… merge …"` is refused too. A `gh pr` or
+  `gh api` command built at run time (`$var`, `$(…)`, backticks, `eval`, `$'\x..'` escapes) is refused as unreadable:
+  use literal arguments. Use the file tools for prose that mentions the command. A merge from the web UI,
   a direct push to the base branch, `curl`, or a differently spelled command is not seen. It is a guard against an
   agent taking the normal route, not a sandbox; branch protection with the `review` check is the real gate.
 - Prompt injection is mitigated, not eliminated: the model is told the diff is data, but a determined PR can still

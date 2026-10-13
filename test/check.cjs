@@ -135,8 +135,10 @@ for(const m of ['gh pr view 5','gh pr list','gh pr view 5 --json mergeable,merge
  assert.equal(inspect(m),null,'let through: '+m);
 for(const m of ['gh pr -R o/r merge 5 '+M,'gh pr --squash merge 5 -R o/r '+M,'gh api -X PUT repos/o/r/pulls/5/merge','-Ogh pr merge 5 -R o/r '+M,
  'gh api \\\n repos/o/r/pulls/5/merge -X PUT','gh "pr" merge 5 -R o/r '+M,"gh 'pr' 'merge' 5",'gh pr view 5 --json mergeable; gh pr merge 5',
- 'gh pr view 5 && echo merge','git commit -m "docs: gh pr merge"','gh pr edit 5 --body merge-ready'])
+ 'gh pr view 5 && echo merge','git commit -m "docs: gh pr merge"','gh pr edit 5 --body merge-ready',
+ "gh pr $'\\x6derge' 5",'gh pr view $PR','gh pr `pick` 5','gh api repos/o/r/pulls/$(cat n)/merge','eval "gh pr view 5"','gh pr vie\\x77 5'])
  assert.throws(()=>inspect(m),undefined,'refused: '+m);
+assert.equal(inspect('echo $HOME; git log'),null,'$ away from gh pr/api is nobody\'s business');
 assert.deepEqual(inspect('gh pr merge 5 -R o/r '+M),{repo:'o/r',pr:'5',head:H},'the plain form is checked');
 assert.deepEqual(inspect('gh pr \\\n merge 5 -R o/r '+M),{repo:'o/r',pr:'5',head:H},'a line continuation is joined, then checked');
 assert.deepEqual(target('gh pr merge 71 --squash -R o/r '+M),{repo:'o/r',pr:'71',head:H});

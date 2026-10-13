@@ -23,9 +23,13 @@ const verdictOf=review=>{const all=[...review.matchAll(VERDICT)].map(m=>m[1]);re
 const MENTION=/gh\b[\s\S]*\bpr\b[\s\S]*merge|gh\b[\s\S]*\bapi\b[\s\S]*merge/;
 const READ_ONLY=/^\s*gh\s+pr\s+(view|list|checks|diff|status)\b[^;&|`$()<>\n]*$/;
 const joined=command=>command.replace(/\\\r?\n/g,' ');
+// A gh pr/api command whose words the shell builds at run time ($var, $(…), `…`, eval, $'\x6d' escapes) could spell
+// merge without writing it, so it is refused outright: the hook only passes what it can read.
+const BUILT=/\$|`|\beval\b|\\(?:x[0-9a-f]{2}|u[0-9a-f]{4}|[0-7]{3})/i;
 // null: not a merge, let it through. Otherwise the merge target, or a throw when the command cannot be read exactly.
 function inspect(command){
  const c=joined(command),norm=c.replace(/["'\\]/g,'');
+ if(/gh\b[\s\S]*\b(pr|api)\b/.test(norm)&&BUILT.test(c))throw Error('a gh pr/api command with $, backticks, eval or escape sequences cannot be read: use literal arguments');
  if(!MENTION.test(norm)||READ_ONLY.test(norm))return null;
  return target(c);
 }
