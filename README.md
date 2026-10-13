@@ -8,7 +8,7 @@ ends with a verdict line, and the job **fails unless the verdict is `APPROVE`**,
 cannot merge past a review that found a CRITICAL or HIGH problem. A companion hook for Claude Code stops coding agents
 from running `gh pr merge` until the review of the exact head commit approves.
 
-Zero dependencies. Three files: the reviewer, the hook, and an optional local dashboard. Node 20 or newer. It
+Zero dependencies. The reviewer and the hook are one file each; an optional local dashboard adds two more. Node 20 or newer. It
 executes nothing from the pull request.
 
 Built for repositories where an agent writes most of the code: the author's model should not be the only reviewer,

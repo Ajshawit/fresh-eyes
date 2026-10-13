@@ -5,8 +5,8 @@ Date: 2026-10-13. Extracted from a single-repo CI harness into a reusable GitHub
 ## Goal
 
 An independent model reviews every pull request and can block the merge. The PR must not be able to change how it is
-judged. The whole thing stays three dependency-free Node files (the reviewer, the hook, and an optional local
-dashboard) so it can be read in one sitting and vendored by hand.
+judged. The whole thing stays dependency-free: the reviewer and the hook are one Node file each, and an optional local dashboard is a Node
+file plus its HTML page, so it can be read in one sitting and vendored by hand.
 
 ## Components
 
@@ -15,7 +15,7 @@ dashboard) so it can be read in one sitting and vendored by hand.
 | `review.cjs` | Diff + files + brief to a chat endpoint; post one comment; exit 1 unless `VERDICT: APPROVE` | `action.yml`, manual runs | git, `fetch`, GitHub REST |
 | `require-review.cjs` | PreToolUse hook: allow `gh pr merge` only when the review comment approves the current head | Claude Code | `gh` |
 | `action.yml` | Composite action mapping inputs to the env `review.cjs` reads | consumer workflows | `review.cjs` |
-| `dashboard.cjs` | Local page of every PR's pipeline stages across repos; toggles an automerge label; merges labelled PRs once the hook's rule approves the head | operator | `gh`, `require-review.cjs` |
+| `dashboard.cjs` + `dashboard.html` | Local page of every PR's pipeline stages across repos; toggles an automerge label; merges labelled PRs once the hook's rule approves the head | operator | `gh`, `require-review.cjs` |
 | `.fresh-eyes.json` | Optional per-repo brief path and path-matched focuses, read from the base branch | `review.cjs` | — |
 | `test/check.cjs` | Pure unit checks with fixtures under `test/fixtures/` | CI | — |
 

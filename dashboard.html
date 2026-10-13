@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fresh-eyes</title>
+<style>
+:root{--bg:#F4F4F1;--card:#fff;--fg:#17191E;--mute:#5A5E68;--line:#E2E2DC;--soft:#EEEEE9;--ring:#C9CCD3;
+ --ok:#15603C;--ok-bg:#E7F3EC;--ok-edge:#A9D3BA;--bad:#B4400C;--bad-bg:#FCEDE4;--bad-edge:#EDB89A;--wait:#8A5A00;--wait-bg:#FBF3E3;--wait-edge:#E7CD93;--link:#1F4FB8;
+ --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;--mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace}
+@media(prefers-color-scheme:dark){:root{--bg:#0F1115;--card:#171A20;--fg:#E8E9EC;--mute:#9DA2AD;--line:#2A2E37;--soft:#20242C;--ring:#4A4F5A;
+ --ok:#4CC38A;--ok-bg:#132A1F;--ok-edge:#245A3E;--bad:#F08A5D;--bad-bg:#2E1A12;--bad-edge:#6B3420;--wait:#E0B04F;--wait-bg:#2A2312;--wait-edge:#5E4A1C;--link:#7FA7FF}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--sans)}
+a{color:var(--link)}
+button{font:inherit;cursor:pointer}
+header{display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px;padding:12px 24px;background:#17191E;color:#F4F4F1}
+header .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:16px}
+header label{display:flex;align-items:center;gap:8px;font-size:13px;color:#B9BCC4}
+header select{font:13px var(--mono);color:#F4F4F1;background:#262931;border:1px solid #3A3E48;border-radius:6px;padding:8px 10px;min-height:40px;max-width:70vw}
+header .grow{flex:1 1 auto}
+header .status{font-size:13px;color:#B9BCC4}
+header button{font-weight:600;font-size:13px;color:#17191E;background:#F4F4F1;border:0;border-radius:6px;padding:10px 16px;min-height:44px}
+.wrap{max-width:1440px;margin:0 auto;padding:20px 24px 48px;display:flex;flex-direction:column;gap:16px}
+.err{margin:0;padding:10px 14px;border-radius:8px;background:var(--bad-bg);border:1px solid var(--bad-edge);color:var(--bad)}
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.tile{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;display:flex;flex-direction:column;gap:2px}
+.tile .k,.cols,.eyebrow{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--mute)}
+.tile .n{font-size:30px;font-weight:700;line-height:1.15}
+.tile .h{font-size:13px;color:var(--mute)}
+.split{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.list{flex:999 1 640px;min-width:0}
+.bar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line)}
+.tabs{display:flex;gap:4px;background:var(--soft);border-radius:8px;padding:4px}
+.tabs button{font-size:13px;border:0;border-radius:6px;padding:8px 12px;min-height:36px;background:transparent;color:var(--mute)}
+.tabs button[aria-pressed=true]{background:var(--card);color:var(--fg);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.1)}
+.bar label{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--mute);min-height:44px}
+.bar input{width:18px;height:18px;margin:0}
+.cols,.row{display:grid;grid-template-columns:minmax(0,1fr) 340px 104px;gap:16px;padding:10px 14px}
+.cols{border-bottom:1px solid var(--line)}.cols span:last-child{text-align:right}
+h2.repo{margin:0;padding:12px 14px 4px;font:600 13px var(--mono);color:var(--mute)}
+.row{align-items:center;padding:12px 14px;border-bottom:1px solid var(--soft);cursor:pointer}
+.row:hover{background:var(--soft)}
+.row.ready{box-shadow:inset 3px 0 0 var(--ok);background:color-mix(in srgb,var(--ok-bg) 60%,transparent)}
+.row.attn{box-shadow:inset 3px 0 0 var(--bad)}
+.row.sel{background:var(--soft);outline:2px solid var(--link);outline-offset:-2px}
+.who{min-width:0;display:flex;flex-direction:column;gap:2px}
+.title{all:unset;cursor:pointer;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-radius:4px}
+.title:focus-visible{outline:2px solid var(--link);outline-offset:2px}
+.num{font:500 13px var(--mono);color:var(--mute);margin-right:4px}
+.meta{font-size:13px;color:var(--mute)}
+.track{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(5,minmax(0,1fr))}
+.st{position:relative;display:flex;flex-direction:column;align-items:center;gap:5px;font-size:12px;font-weight:500;color:var(--mute);text-align:center}
+.st:not(:last-child)::after{content:"";position:absolute;top:7px;left:50%;width:100%;height:2px;background:var(--line)}
+.st.ok:not(:last-child)::after{background:var(--ok)}
+.dot{position:relative;z-index:1;width:16px;height:16px;border-radius:50%;background:var(--card);border:2px solid var(--ring)}
+.st.ok{color:var(--ok)}.st.ok .dot{background:var(--ok);border-color:var(--ok)}
+.st.bad{color:var(--bad)}.st.bad .dot{background:var(--bad);border-color:var(--bad)}
+.st.wait{color:var(--wait)}.st.wait .dot{border:3px solid var(--wait)}
+.st.ready{color:var(--ok)}.st.ready .dot{border:3px solid var(--ok)}
+.act{display:flex;justify-content:flex-end}
+.btn{font-size:13px;font-weight:600;border-radius:6px;padding:8px 12px;min-height:40px;color:var(--fg);background:var(--card);border:1px solid var(--ring);text-decoration:none;display:inline-flex;align-items:center}
+.btn.go{color:#fff;background:var(--ok);border-color:var(--ok)}
+.btn[aria-pressed=true]{color:var(--ok);border-color:var(--ok)}
+.btn:disabled{color:var(--mute);background:var(--soft);border-color:var(--line);cursor:default}
+.tag{font-size:12px;color:var(--mute)}
+.note{grid-column:1/-1;font-size:12px;color:var(--mute)}
+.note.bad{color:var(--bad)}
+.foot{margin:0;padding:12px 14px;font-size:13px;color:var(--mute)}
+.foot button{all:unset;cursor:pointer;color:var(--link);text-decoration:underline}
+.empty{margin:0;padding:24px 14px;color:var(--mute)}
+aside{flex:1 1 400px;min-width:0}
+@media(min-width:1100px){aside{position:sticky;top:16px;max-height:calc(100vh - 32px);overflow:auto}}
+.dh{padding:16px 18px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+.dh h2{margin:0;font-size:17px;line-height:1.3}
+.mono{font:12px var(--mono);color:var(--mute)}
+.banner{margin:14px 18px;padding:12px 14px;border-radius:8px;border:1px solid var(--line);background:var(--soft);display:flex;flex-direction:column;gap:8px}
+.banner strong{font-size:15px}
+.banner.ok{background:var(--ok-bg);border-color:var(--ok-edge)}.banner.ok strong{color:var(--ok)}
+.banner.bad{background:var(--bad-bg);border-color:var(--bad-edge)}.banner.bad strong{color:var(--bad)}
+.banner.wait{background:var(--wait-bg);border-color:var(--wait-edge)}.banner.wait strong{color:var(--wait)}
+.banner .btns{display:flex;flex-wrap:wrap;gap:8px}.banner .btn{min-height:44px;padding:10px 16px;font-size:14px}
+.counts{margin:0 18px;font-size:13px;color:var(--mute)}
+.md{padding:4px 18px 18px;overflow-wrap:anywhere}
+.md code{font:12px var(--mono);background:var(--soft);padding:1px 4px;border-radius:4px}
+.md h3{font-size:15px}
+.hint{padding:18px;color:var(--mute)}
+@media(max-width:820px){.tiles{grid-template-columns:repeat(2,minmax(0,1fr))}.cols{display:none}.row{grid-template-columns:1fr}.act{justify-content:flex-start}header{padding:12px 16px}.wrap{padding:16px}}
+</style>
+<header>
+ <span class="brand"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>fresh-eyes</span>
+ <label>Repository <select id="repo"></select></label>
+ <span class="grow"></span>
+ <span class="status" id="at">loading…</span>
+ <button id="refresh">Refresh</button>
+</header>
+<div class="wrap">
+ <p class="err" id="errors" hidden></p>
+ <section class="tiles" id="tiles" aria-label="Summary"></section>
+ <div class="split">
+  <section class="card list" aria-label="Pull requests">
+   <div class="bar">
+    <div class="tabs" role="group" aria-label="Filter" id="tabs"></div>
+    <span class="grow" style="flex:1 1 auto"></span>
+    <label><input type="checkbox" id="merged"> <span id="mergedLabel">Show merged</span></label>
+   </div>
+   <div class="cols" aria-hidden="true"><span>Pull request</span><span>Pipeline</span><span>Automerge</span></div>
+   <div id="rows"></div>
+  </section>
+  <aside class="card" id="aside" aria-live="polite"><p class="hint">Select a pull request to read its review.</p></aside>
+ </div>
+</div>
+<script>
+const HEADER='__HEADER__';
+let state=null,selected=null,review=null,showMerged=false,tab='open',pick='';
+const $=id=>document.getElementById(id);
+const el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;};
+const age=iso=>{const h=Math.round((Date.now()-new Date(iso))/36e5);return h<1?'just now':h<48?h+'h ago':Math.round(h/24)+'d ago';};
+const open=s=>s.end==='open';
+const ready=s=>open(s)&&s.verdict==='APPROVE'&&s.check!=='fail'&&s.check!=='pending';
+const blocked=s=>open(s)&&(s.verdict==='REQUEST_CHANGES'||s.check==='fail');
+const attention=s=>blocked(s)||open(s)&&(s.verdict==='stale'||s.verdict==='unparsed'||s.automerge==='failed');
+const awaiting=s=>open(s)&&(s.verdict==='none'||s.verdict==='stale'||s.check==='pending');
+const TABS=[['open','Open',s=>open(s)||s.end==='draft'],['attention','Needs attention',attention],['closed','Closed',s=>s.end==='closed']];
+// Each stage as [kind, label]: ok filled, bad blocked, wait ringed amber, ready ringed green, none empty.
+function track(s){
+ const check={pass:['ok','Check'],fail:['bad','Failed'],pending:['wait','Running'],none:['none','Check']}[s.check];
+ const verdict={APPROVE:['ok','Approved'],REQUEST_CHANGES:['bad','Changes'],stale:['wait','Stale'],unparsed:['wait','Unclear'],none:['none','Verdict']}[s.verdict];
+ const am={off:ready(s)?['ready','Ready']:['none','Automerge'],waiting:['wait','Queued'],merging:['wait','Merging'],merged:['ok','Merged'],failed:['bad','Failed']}[s.automerge];
+ const end=s.end==='merged'?['ok','Merged']:s.end==='closed'?['none','Closed']:['none','Merged'];
+ return [s.end==='draft'?['wait','Draft']:['ok','Opened'],check,verdict,am,end];
+}
+const counts=s=>[s.critical+' critical',s.high+' high',(s.medium||0)+' medium',(s.low||0)+' low'].join(' · ');
+function meta(s){
+ const who=s.opened.author+' · opened '+age(s.opened.at);
+ if(s.end==='draft')return who+' · draft';
+ if(s.verdict==='none')return who+' · no review yet';
+ return who+' · '+s.critical+' critical, '+s.high+' high';
+}
+function rowsInView(){
+ const out=[];
+ for(const [repo,r] of Object.entries(state.repos))if(!pick||pick===repo)for(const x of r.rows)out.push({repo,...x});
+ return out;
+}
+async function load(){state=await (await fetch('/api/state')).json();draw();}
+async function post(path,data){
+ const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json',[HEADER]:'1'},body:JSON.stringify(data||{})});
+ if(!r.ok){const e=(await r.json()).error;$('errors').hidden=false;$('errors').textContent=e;}
+ await load();
+}
+function labelButton(repo,pr,s,big){
+ if(s.end==='draft'){const b=el('button','btn','Draft');b.disabled=true;return b;}
+ if(!open(s))return el('span','tag',s.end);
+ const on=s.automerge!=='off';
+ const b=el('button','btn'+(!on&&ready(s)?' go':''),on?'Labelled':'Label '+(big?state.label:''));
+ b.setAttribute('aria-pressed',String(on));
+ b.title=on?'Remove the '+state.label+' label':'Add the '+state.label+' label';
+ b.onclick=e=>{e.stopPropagation();post('/api/label',{repo,pr:pr.number,on:!on});};
+ return b;
+}
+function draw(){
+ const repos=Object.keys(state.repos);
+ const sel=$('repo');sel.replaceChildren();
+ const all=el('option','','All repositories ('+repos.length+')');all.value='';sel.append(all);
+ for(const r of repos){const o=el('option','',r);o.value=r;sel.append(o);}
+ sel.value=pick;
+ $('at').textContent=state.at?'Updated '+new Date(state.at).toLocaleTimeString()+' · every '+state.every+' s · '+state.method+' · label '+state.label:'loading…';
+ const errs=Object.entries(state.repos).filter(([,r])=>r.error).map(([k,r])=>k+': '+r.error);
+ $('errors').hidden=!errs.length;$('errors').textContent=errs.join(' · ');
+ const view=rowsInView(),ss=view.map(x=>x.stages);
+ const tiles=[['Ready to merge',ss.filter(s=>ready(s)&&s.automerge!=='merged').length,'Approved for the current head','var(--ok)'],
+  ['Blocked by review',ss.filter(blocked).length,'Critical or high findings, or a failed check','var(--bad)'],
+  ['Awaiting review',ss.filter(awaiting).length,'No review for the current head','var(--wait)'],
+  ['Drafts',ss.filter(s=>s.end==='draft').length,'Not reviewed until ready','var(--fg)']];
+ $('tiles').replaceChildren(...tiles.map(([k,n,h,c])=>{const t=el('div','tile');const v=el('span','n',String(n));v.style.color=c;t.append(el('span','k',k),v,el('span','h',h));return t;}));
+ $('tabs').replaceChildren(...TABS.map(([id,name,f])=>{const b=el('button','',name+' '+ss.filter(f).length);b.setAttribute('aria-pressed',String(tab===id));b.onclick=()=>{tab=id;draw();};return b;}));
+ const merged=view.filter(x=>x.stages.end==='merged');
+ $('mergedLabel').textContent='Show merged ('+merged.length+')';
+ const f=TABS.find(t=>t[0]===tab)[2];
+ const shown=view.filter(x=>f(x.stages)||showMerged&&x.stages.end==='merged');
+ const box=$('rows');box.replaceChildren();
+ if(!shown.length)box.append(el('p','empty',tab==='attention'?'Nothing needs attention.':'No pull requests here.'));
+ let last=null;
+ for(const {repo,pr,stages:s} of shown){
+  if(!pick&&repos.length>1&&repo!==last){box.append(el('h2','repo',repo));last=repo;}
+  const key=repo+'#'+pr.number;
+  const row=el('div','row'+(ready(s)&&s.automerge==='off'?' ready':'')+(attention(s)?' attn':'')+(selected===key?' sel':''));
+  const who=el('div','who'),title=el('button','title');
+  title.append(el('span','num','#'+pr.number),document.createTextNode(pr.title));
+  title.onclick=e=>{e.stopPropagation();show(repo,pr.number);};
+  who.append(title,el('span','meta',meta(s)));
+  const ol=el('ol','track');ol.setAttribute('aria-label','Pipeline stages');
+  for(const [k,l] of track(s)){const li=el('li','st '+k);li.append(el('span','dot'),el('span','',l));ol.append(li);}
+  const act=el('div','act');act.append(labelButton(repo,pr,s));
+  row.append(who,ol,act);
+  if(pr.automerge?.last)row.append(el('div','note'+(pr.automerge.last.ok?'':' bad'),(pr.automerge.last.ok?'Merged ':'Merge failed ')+new Date(pr.automerge.last.at).toLocaleString()+': '+pr.automerge.last.message));
+  row.onclick=()=>show(repo,pr.number);
+  box.append(row);
+ }
+ if(!showMerged&&merged.length){const p=el('p','foot',merged.length+' merged hidden. ');const b=el('button','','Show them');b.onclick=()=>{showMerged=true;$('merged').checked=true;draw();};p.append(b);box.append(p);}
+ drawer();
+}
+// The drawer's verdict banner: what state the PR is in, and what happens next.
+function banner(s,pr){
+ const last=pr.automerge?.last;
+ if(s.end==='merged')return ['ok','Merged',last?.ok?'Merged by this dashboard.':'Merged on GitHub.'];
+ if(s.end==='closed')return ['none','Closed without merging',''];
+ if(s.end==='draft')return ['none','Draft','Not reviewed until it is marked ready.'];
+ if(s.automerge==='failed')return ['bad','Merge failed',(last?.message||'')+'. Remove and re-add the label to retry this head.'];
+ if(s.automerge==='merging')return ['ok','Merging now','The review approves this head and GitHub reports it clean.'];
+ if(s.automerge==='waiting')return ['wait','Queued for automerge','Labelled. Merges once the review approves this head and GitHub reports the PR clean.'];
+ if(s.verdict==='APPROVE')return ['ok','Approved for this head','Label it and it merges once GitHub reports the PR clean.'];
+ if(s.verdict==='REQUEST_CHANGES')return ['bad','Changes requested',s.critical+' critical and '+s.high+' high findings stand.'];
+ if(s.verdict==='stale')return ['wait','Review is for an older head','A push landed after the review. Wait for the next run.'];
+ if(s.verdict==='unparsed')return ['wait','No clear verdict','The review has no single agreeing verdict line, so it is not an approval.'];
+ return ['none','No review yet','The review job has not commented on this pull request.'];
+}
+function drawer(){
+ const aside=$('aside');
+ if(!selected){aside.replaceChildren(el('p','hint','Select a pull request to read its review.'));return;}
+ const [repo,n]=[selected.slice(0,selected.lastIndexOf('#')),+selected.slice(selected.lastIndexOf('#')+1)];
+ const x=state.repos[repo]?.rows.find(y=>y.pr.number===n);
+ if(!x){aside.replaceChildren(el('p','hint','That pull request is no longer listed.'));return;}
+ const {pr,stages:s}=x,dh=el('div','dh');
+ const h=el('h2');h.append(el('span','num','#'+pr.number),document.createTextNode(pr.title));
+ dh.append(el('span','eyebrow',repo),h,el('span','mono','head '+String(pr.headRefOid||'').slice(0,7)+(review?.model?' · '+review.model:'')+' · updated '+age(pr.updatedAt)));
+ const [kind,head,why]=banner(s,pr),b=el('div','banner '+kind);
+ b.append(el('strong','',head));if(why)b.append(el('span','',why));
+ const btns=el('div','btns');
+ if(open(s))btns.append(labelButton(repo,pr,s,true));
+ const gh=el('a','btn','Open on GitHub');gh.href=pr.url;gh.target='_blank';gh.rel='noopener';btns.append(gh);
+ b.append(btns);
+ const parts=[dh,b];
+ if(s.verdict!=='none')parts.push(el('p','counts',counts(s)));
+ const md=el('div','md');
+ if(!review)md.append(el('p','tag','Loading the review…'));
+ else if(review.error)md.append(el('p','tag','Could not load the review: '+review.error));
+ else if(review.html)md.innerHTML=review.html;
+ else md.append(el('p','tag','No fresh-eyes review on this pull request.'));
+ parts.push(md);
+ aside.replaceChildren(...parts);
+}
+async function show(repo,n){
+ const key=repo+'#'+n;
+ selected=key;review=null;draw();
+ const r=await fetch('/api/review?repo='+encodeURIComponent(repo)+'&pr='+n+'&html=1',{headers:{[HEADER]:'1'}});
+ const data=await r.json();
+ if(selected!==key)return; // a later click won
+ review=r.ok?data:{error:data.error};drawer();
+}
+$('repo').onchange=e=>{pick=e.target.value;draw();};
+$('merged').onchange=e=>{showMerged=e.target.checked;draw();};
+$('refresh').onclick=()=>post('/api/refresh');
+load();setInterval(load,30_000);
+</script>

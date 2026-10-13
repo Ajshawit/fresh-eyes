@@ -325,6 +325,7 @@ const get=(p)=>fetch(base+p);
 const post=(p,data,headers={})=>fetch(base+p,{method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify(data)});
 try{
  const page=await (await get('/')).text();
+ assert(!PAGE.includes('__HEADER__')&&PAGE.includes("const HEADER='"+HEADER+"'"),'the page gets the real header name');
  assert(page.includes('<!doctype html>')&&page.includes('/api/state'));
  assert(!/innerHTML\s*=\s*[^'"]*\b(title|login|author|name|message)\b/.test(PAGE),'PR text goes in as text, never HTML');
  await post('/api/refresh',{},{[HEADER]:'1'});
