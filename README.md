@@ -71,8 +71,8 @@ brief or the focuses it is judged by; its edit to the file is reviewed like any 
     {"match": "^\\.github/", "focus": "CI security: untrusted input interpolated into run:, token permissions, the fork guard on self-hosted jobs."},
     {"match": "^tests?/", "focus": "Tests: do they check the changed behaviour, can they pass while it is broken."}
   ],
-  "ignore": ["^package-lock\\.json$", "\\.snap$"],
-  "diffOnly": ["^dist/bundle\\.js$"]
+  "ignore": ["\\.snap$", "^fixtures/generated/"],
+  "diffOnly": ["^package-lock\\.json$", "^dist/bundle\\.js$"]
 }
 ```
 
@@ -81,10 +81,12 @@ brief or the focuses it is judged by; its edit to the file is reviewed like any 
 - `focuses` are regular expressions over changed paths. Every focus whose pattern matches a changed file is added to
   the general correctness focus. Unmatched areas add nothing, so a docs-only PR is not reviewed as if it touched
   the server.
-- `ignore` names generated files. They are listed to the model as changed, but their diff and text are left out so a
-  lockfile does not spend the budget. Because the list lives on the base branch, a PR cannot hide its own files.
-- `diffOnly` names files too large to inline in full. Their diff is shown, their text is not, and that does not count
-  as incomplete coverage. Use it for a hand-written file that is simply huge; use `ignore` for generated ones.
+- `ignore` hides a file from the reviewer entirely: it is listed as changed, but neither its diff nor its text is
+  shown. Use it only for files nobody would review by hand, such as test snapshots or generated fixtures. Because the
+  list lives on the base branch, a PR cannot add its own files to it.
+- `diffOnly` shows a file's diff but not its text, and does not count as incomplete coverage. Use it for lockfiles
+  and bundles: a changed `resolved` URL or integrity hash is exactly what a reviewer must see before CI installs it,
+  and for a hand-written file that is simply too large to inline.
 
 ### Action inputs
 
