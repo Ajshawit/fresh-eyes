@@ -28,7 +28,7 @@ as an approval, and the test already asserts it agrees with `review.cjs`.
 ## Usage
 
 ```
-node dashboard.cjs [--repo owner/name ...] [--port 7331] [--method squash|merge|rebase] [--label automerge] [--every 60]
+node dashboard.cjs [--repo owner/name ...] [--port 7331] [--method squash|merge|rebase] [--label automerge] [--every 60] [--rediscover]
 ```
 
 Prints the URL and opens nothing. `--repo` given at least once skips discovery and covers exactly those repos.
