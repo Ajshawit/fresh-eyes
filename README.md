@@ -197,10 +197,10 @@ Limits you should know about:
   test workflow on `pull_request` with default permissions) could post a comment as `github-actions[bot]` that looks
   like an approval. Set the repository's default workflow permissions to read-only and grant `pull-requests: write`
   only to the review job, as in the quick start.
-- The hook refuses a few harmless commands too, fail-closed: a `gh pr create --title "… merge …"` reads as a merge
-  mention. Use the file tools for prose that mentions the command.
-- The hook sees `gh pr merge` and `gh api …/merge` in Bash (line continuations joined first) and the GitHub MCP
-  merge tool. A merge from the web UI,
+- The hook inspects any Bash command that mentions `gh`, `pr` or `api`, and `merge`, after stripping quotes and
+  joining line continuations. A single read-only `gh pr view|list|checks|diff|status` call passes; anything else must
+  be the exact plain merge form or it is refused, so `gh pr create --title "… merge …"` is refused too. Use the file
+  tools for prose that mentions the command. A merge from the web UI,
   a direct push to the base branch, `curl`, or a differently spelled command is not seen. It is a guard against an
   agent taking the normal route, not a sandbox; branch protection with the `review` check is the real gate.
 - Prompt injection is mitigated, not eliminated: the model is told the diff is data, but a determined PR can still

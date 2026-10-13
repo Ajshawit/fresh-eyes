@@ -22,7 +22,7 @@ process.env.REPO_ROOT=REPO;
 const review=require('../review.cjs');
 const hook=require('../require-review.cjs');
 const {parseConfig,focuses,verdictOf,headOf,baseOf,reusable,fileText,comment,sse,MARKER,MAX_COMMENT}=review;
-const {decide,target,MERGE,joined}=hook;
+const {decide,target,inspect}=hook;
 
 try{
 // Config: absent is fine, patterns become regexes, bad shapes are refused with the file named.
@@ -128,17 +128,17 @@ assert.match(decide(['an unrelated comment'],sha),/no fresh-eyes review/);
 assert.match(decide([rev(old,'APPROVE')],sha),/older commit/,'an approval of an older push does not count');
 assert.match(decide([rev(sha,'REQUEST_CHANGES')],sha),/did not approve/);
 assert.match(decide([MARKER+'\nVERDICT: APPROVE'],sha),/older commit/,'a review with no head line does not count');
-// Which commands the hook inspects at all: merges in any gh spelling, not other gh commands.
-for(const m of ['gh pr merge 5','gh pr -R o/r merge 5','gh pr --repo o/r -s merge 5','gh api -X PUT repos/o/r/pulls/5/merge',
- 'gh api repos/o/r/pulls/5/merge -f merge_method=squash','-Ogh pr merge 5','git commit -m "docs: gh pr merge"',
- joined('gh api \\\n repos/o/r/pulls/5/merge -X PUT'),joined('gh pr \\\n merge 5')])
- assert(MERGE.test(m),'inspected: '+m);
-for(const m of ['gh pr view 5','gh pr list','gh api repos/o/r/pulls/5','git merge main','echo merge',
- 'gh pr view 5 --json mergeable,mergeStateStatus','gh pr list --search merge','gh pr checks 5 --json name,merge'])
- assert(!MERGE.test(m),'not inspected: '+m);
-assert.match(joined('gh api \\\n  repos/o/r/pulls/5/merge'),/^gh api +repos\/o\/r\/pulls\/5\/merge$/,'a backslash-newline is a space');
-assert.match(joined('a \\\r\n b'),/^a +b$/,'CRLF too');
+// Which commands the hook inspects at all: null lets it through; a throw refuses it; a target is checked.
 const H=sha,M='--match-head-commit '+H;
+for(const m of ['gh pr view 5','gh pr list','gh pr view 5 --json mergeable,mergeStateStatus','gh pr list --search merge',
+ 'gh pr list --search "merge me"','gh pr checks 83 --json name,merge','gh api repos/o/r/pulls/5','git merge main','echo merge','ls'])
+ assert.equal(inspect(m),null,'let through: '+m);
+for(const m of ['gh pr -R o/r merge 5 '+M,'gh pr --squash merge 5 -R o/r '+M,'gh api -X PUT repos/o/r/pulls/5/merge','-Ogh pr merge 5 -R o/r '+M,
+ 'gh api \\\n repos/o/r/pulls/5/merge -X PUT','gh "pr" merge 5 -R o/r '+M,"gh 'pr' 'merge' 5",'gh pr view 5 --json mergeable; gh pr merge 5',
+ 'gh pr view 5 && echo merge','git commit -m "docs: gh pr merge"','gh pr edit 5 --body merge-ready'])
+ assert.throws(()=>inspect(m),undefined,'refused: '+m);
+assert.deepEqual(inspect('gh pr merge 5 -R o/r '+M),{repo:'o/r',pr:'5',head:H},'the plain form is checked');
+assert.deepEqual(inspect('gh pr \\\n merge 5 -R o/r '+M),{repo:'o/r',pr:'5',head:H},'a line continuation is joined, then checked');
 assert.deepEqual(target('gh pr merge 71 --squash -R o/r '+M),{repo:'o/r',pr:'71',head:H});
 assert.deepEqual(target('gh pr merge --repo o/r --squash 9 '+M+' && echo done'),{repo:'o/r',pr:'9',head:H});
 assert.deepEqual(target('gh pr merge https://github.com/o/r/pull/3 -d '+M),{repo:undefined,pr:'https://github.com/o/r/pull/3',head:H});

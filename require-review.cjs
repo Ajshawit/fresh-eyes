@@ -15,13 +15,20 @@ const headOf=body=>body.match(/^<!-- head: ([0-9a-f]{40}) -->$/m)?.[1]||null;
 const VERDICT=/^[`*]*VERDICT:[ \t]*(APPROVE|REQUEST_CHANGES)[`*]*[ \t]*$/gm;
 // Every verdict line must agree: a quoted injected APPROVE next to a real REQUEST_CHANGES is no approval.
 const verdictOf=review=>{const all=[...review.matchAll(VERDICT)].map(m=>m[1]);return all.length&&all.every(v=>v===all[0])?all[0]:null;};
-// Commands this hook inspects: `gh pr merge`, `gh pr <flags> merge` with the flags gh accepts before the subcommand,
-// and `gh api` on a pull request's merge endpoint. No leading boundary: a mention joined to other characters
-// (-Ogh pr merge) is inspected too, and since it is not the plain form, refused. `merge` is a whole word, so
-// `gh pr view --json mergeable` passes. Even a mention in text gates the call: text can be written somewhere that runs.
-const MERGE=/gh\s+pr\b(?:\s+-\S+(?:\s+[^-\s]\S*)?)*\s+merge\b|gh\s+api\b[^;&|\n]*\/merge\b/;
-// Bash joins a backslash-newline before it reads a word, so the hook does the same before it looks for merges.
+// What the hook inspects: any command that mentions gh, pr or api, and merge, once shell quotes are stripped
+// (`gh "pr" merge`) and backslash-newlines joined, as bash does before it reads a word. Of those, a single read-only
+// `gh pr view|list|checks|diff|status` call with no shell operators passes (`--json mergeable`, `--search merge`);
+// everything else must be the exact plain `gh pr merge` form target() reads, or it is refused. Fail closed: a mention
+// in text gates the call too, since text can be written somewhere that runs.
+const MENTION=/gh\b[\s\S]*\bpr\b[\s\S]*merge|gh\b[\s\S]*\bapi\b[\s\S]*merge/;
+const READ_ONLY=/^\s*gh\s+pr\s+(view|list|checks|diff|status)\b[^;&|`$()<>\n]*$/;
 const joined=command=>command.replace(/\\\r?\n/g,' ');
+// null: not a merge, let it through. Otherwise the merge target, or a throw when the command cannot be read exactly.
+function inspect(command){
+ const c=joined(command),norm=c.replace(/["'\\]/g,'');
+ if(!MENTION.test(norm)||READ_ONLY.test(norm))return null;
+ return target(c);
+}
 
 // Why the merge must wait, or null when the bot's review approves this head.
 function decide(bodies,head){
@@ -42,7 +49,7 @@ const PR=/^(\d+|https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+)$/;
 // PR, repo and head commit from a `gh pr merge` command, or a throw. All three are required: nothing is taken from
 // the shell's cwd (a `cd` would point gh at another repo) or from time (--match-head-commit pins what was reviewed).
 function target(command){
- if(!/\bgh\s+pr\s+merge\b/.test(command))throw Error('merge with `gh pr merge <pr> --repo owner/name --match-head-commit <sha>`, not gh api or flags before merge');
+ if(!/\bgh\s+pr\s+merge\b/.test(command))throw Error('this mentions gh and merge: merge with `gh pr merge <pr> --repo owner/name --match-head-commit <sha>` on its own (not gh api, no flags before merge); keep other text out of commands that run gh');
  if(/\bGH_\w*=|\bgh\s+pr\s+merge\b[\s\S]*\bgh\s+pr\s+merge\b/.test(command))throw Error('use one plain `gh pr merge`, with no GH_* overrides');
  const [before,rest]=command.split(/\bgh\s+pr\s+merge\b/);
  // Nothing may run before it: a `cd`, an alias or a function defined earlier could change what gh merges.
@@ -76,9 +83,9 @@ const gh=args=>execFileSync('gh',args,{encoding:'utf8',maxBuffer:64<<20});
 function check(input){
  let repo,pr,head;
  if(input.tool_name==='Bash'){
-  const command=joined(input.tool_input?.command||'');
-  if(!MERGE.test(command))return null;
-  ({repo,pr,head}=target(command));
+  const t=inspect(input.tool_input?.command||'');
+  if(!t)return null;
+  ({repo,pr,head}=t);
  }else{
   repo=input.tool_input.owner+'/'+input.tool_input.repo;pr=String(input.tool_input.pullNumber);
  }
@@ -97,4 +104,4 @@ if(require.main===module){
  catch(error){why='Merge blocked: could not confirm a fresh-eyes review approval ('+(error?.message||error).split('\n')[0]+').';}
  if(why){console.error(why);process.exit(2);}
 }
-module.exports={decide,target,verdictOf,headOf,MARKER,MERGE,joined};
+module.exports={decide,target,inspect,verdictOf,headOf,MARKER};
