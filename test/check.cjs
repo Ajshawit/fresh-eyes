@@ -161,5 +161,55 @@ for(const bad of ['gh pr merge 5 -R o/r','gh pr merge 5 '+M,'cd ../other && gh p
  'gh pr -R o/r merge 5 '+M,'gh api -X PUT repos/o/r/pulls/5/merge'])
  assert.throws(()=>target(bad),undefined,'refused: '+bad);
 
+// The dashboard's pure core: arguments, the bot comment as the page reads it, the stage chips, and the merge rule.
+const dash=require('../dashboard.cjs');
+const {parseArgs,parseComment,stages,shouldMerge}=dash;
+const DFIX=path.join(FIX,'dashboard');
+const prs=JSON.parse(fs.readFileSync(path.join(DFIX,'prs.json'),'utf8'));
+const body=fs.readFileSync(path.join(DFIX,'comment.md'),'utf8');
+const H1='1'.repeat(40);
+assert.deepEqual(parseArgs(['--repo','o/r']),{repos:['o/r'],port:7331,method:'squash',label:'automerge',every:60,discover:false,rediscover:false});
+assert.deepEqual(parseArgs(['--discover','--rediscover','--port','8000','--method','rebase','--label','ship it','--every','5']).every,15,'every is clamped to 15');
+assert.equal(parseArgs(['--repo','o/r','--repo','o/s']).repos.length,2);
+for(const bad of [[],['--repo','o/r','--discover'],['--rediscover'],['--repo','bad'],['--port','x'],['--port','70000'],['--method','ff'],['--every','x'],['--label',''],['--what'],['--repo']])
+ assert.throws(()=>parseArgs(bad),/--repo|--discover|--port|--method|--every|--label|unknown argument|needs a value/,'refused: '+bad.join(' '));
+// Comment: head, verdict, model and severity counts; anything without the marker is not a fresh-eyes comment.
+const c=parseComment(body);
+assert.deepEqual([c.head,c.verdict,c.model,c.critical,c.high],[H1,'REQUEST_CHANGES','glm-5.3:cloud',1,2]);
+assert.equal(parseComment('### Fresh-eyes review\nVERDICT: APPROVE'),null);
+assert.equal(parseComment(null),null);
+const approve=parseComment(body.replace('VERDICT: REQUEST_CHANGES','VERDICT: APPROVE'));
+assert.equal(approve.verdict,'APPROVE');
+const noHead=parseComment(body.replace(/^<!-- head: .* -->\n/m,'').replace('REQUEST_CHANGES','APPROVE'));
+assert.equal(noHead.head,null);
+// Stages: one chip per column, from the PR as gh lists it and the comment for it.
+const s1=stages(prs[0],approve,'automerge');
+assert.deepEqual(s1,{opened:{author:'ann',at:'2026-10-01T10:00:00Z'},check:'pass',verdict:'APPROVE',critical:1,high:2,automerge:'merging',end:'open'});
+assert.equal(stages(prs[0],c,'automerge').automerge,'waiting','request changes waits');
+assert.equal(stages(prs[0],null,'automerge').verdict,'none');
+assert.equal(stages(prs[0],noHead,'automerge').verdict,'stale','no head line is never the current head');
+assert.equal(stages(prs[0],{...approve,head:'9'.repeat(40)},'automerge').verdict,'stale');
+assert.equal(stages(prs[0],{...approve,verdict:null},'automerge').verdict,'unparsed');
+assert.equal(stages({...prs[0],labels:[]},approve,'automerge').automerge,'off');
+assert.equal(stages({...prs[0],statusCheckRollup:[]},approve,'automerge').check,'none');
+assert.equal(stages({...prs[0],statusCheckRollup:[{__typename:'CheckRun',name:'lint',status:'COMPLETED',conclusion:'SUCCESS'}]},approve,'automerge').check,'none','only the review job counts');
+assert.equal(stages({...prs[0],statusCheckRollup:[{__typename:'StatusContext',context:'review',state:'PENDING'}]},approve,'automerge').check,'pending');
+const failed={last:{head:H1,ok:false,at:'2026-10-13T11:00:00Z',message:'conflict'}};
+assert.equal(stages({...prs[0],automerge:failed},approve,'automerge').automerge,'failed');
+assert.equal(stages({...prs[0],automerge:{last:{...failed.last,ok:true}}},approve,'automerge').automerge,'merged');
+assert.equal(stages({...prs[0],automerge:{last:{...failed.last,head:'9'.repeat(40)}}},approve,'automerge').automerge,'merging','a failure for an older head does not stick');
+const s2=stages(prs[1],null,'automerge');
+assert.deepEqual([s2.check,s2.verdict,s2.automerge,s2.end],['pending','none','off','draft']);
+const s3=stages(prs[2],null,'automerge');
+assert.deepEqual([s3.check,s3.automerge,s3.end],['fail','merged','merged']);
+// The merge rule: every condition must hold, and one attempt per head.
+assert.equal(shouldMerge(prs[0],approve,'automerge'),true);
+for(const [why,pr,cm] of [['no label',{...prs[0],labels:[]},approve],['draft',{...prs[0],isDraft:true},approve],['closed',{...prs[0],state:'CLOSED'},approve],
+ ['merged',prs[2],approve],['conflicting',{...prs[0],mergeable:'CONFLICTING'},approve],['unknown mergeability',{...prs[0],mergeable:'UNKNOWN'},approve],
+ ['stale head',prs[0],parseComment(approve.body.replace(H1,'9'.repeat(40)))],['no head',prs[0],noHead],['request changes',prs[0],c],['no comment',prs[0],null],
+ ['disagreeing verdicts',prs[0],parseComment(body.replace('VERDICT: REQUEST_CHANGES','VERDICT: APPROVE\nVERDICT: REQUEST_CHANGES'))],
+ ['already tried this head',{...prs[0],automerge:failed},approve],['already merged this head',{...prs[0],automerge:{last:{...failed.last,ok:true}}},approve]])
+ assert.equal(shouldMerge(pr,cm,'automerge'),false,'no merge: '+why);
+assert.equal(shouldMerge(prs[0],approve,'ship'),false,'a different label name does not count');
 console.log('fresh-eyes checks passed');
 }finally{fs.rmSync(REPO,{recursive:true,force:true});fs.rmSync(secret,{force:true});}
