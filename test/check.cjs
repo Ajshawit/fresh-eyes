@@ -22,7 +22,7 @@ process.env.REPO_ROOT=REPO;
 const review=require('../review.cjs');
 const hook=require('../require-review.cjs');
 const {parseConfig,focuses,verdictOf,headOf,baseOf,reusable,fileText,comment,sse,MARKER,MAX_COMMENT}=review;
-const {decide,target,MERGE}=hook;
+const {decide,target,MERGE,joined}=hook;
 
 try{
 // Config: absent is fine, patterns become regexes, bad shapes are refused with the file named.
@@ -129,10 +129,15 @@ assert.match(decide([rev(old,'APPROVE')],sha),/older commit/,'an approval of an 
 assert.match(decide([rev(sha,'REQUEST_CHANGES')],sha),/did not approve/);
 assert.match(decide([MARKER+'\nVERDICT: APPROVE'],sha),/older commit/,'a review with no head line does not count');
 // Which commands the hook inspects at all: merges in any gh spelling, not other gh commands.
-for(const m of ['gh pr merge 5','gh pr -R o/r merge 5','gh api -X PUT repos/o/r/pulls/5/merge','gh api repos/o/r/pulls/5/merge -f merge_method=squash','-Ogh pr merge 5','gh pr merge5','git commit -m "docs: gh pr merge"'])
+for(const m of ['gh pr merge 5','gh pr -R o/r merge 5','gh pr --repo o/r -s merge 5','gh api -X PUT repos/o/r/pulls/5/merge',
+ 'gh api repos/o/r/pulls/5/merge -f merge_method=squash','-Ogh pr merge 5','git commit -m "docs: gh pr merge"',
+ joined('gh api \\\n repos/o/r/pulls/5/merge -X PUT'),joined('gh pr \\\n merge 5')])
  assert(MERGE.test(m),'inspected: '+m);
-for(const m of ['gh pr view 5','gh pr list','gh api repos/o/r/pulls/5','git merge main','echo merge'])
+for(const m of ['gh pr view 5','gh pr list','gh api repos/o/r/pulls/5','git merge main','echo merge',
+ 'gh pr view 5 --json mergeable,mergeStateStatus','gh pr list --search merge','gh pr checks 5 --json name,merge'])
  assert(!MERGE.test(m),'not inspected: '+m);
+assert.match(joined('gh api \\\n  repos/o/r/pulls/5/merge'),/^gh api +repos\/o\/r\/pulls\/5\/merge$/,'a backslash-newline is a space');
+assert.match(joined('a \\\r\n b'),/^a +b$/,'CRLF too');
 const H=sha,M='--match-head-commit '+H;
 assert.deepEqual(target('gh pr merge 71 --squash -R o/r '+M),{repo:'o/r',pr:'71',head:H});
 assert.deepEqual(target('gh pr merge --repo o/r --squash 9 '+M+' && echo done'),{repo:'o/r',pr:'9',head:H});

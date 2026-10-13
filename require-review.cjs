@@ -15,10 +15,13 @@ const headOf=body=>body.match(/^<!-- head: ([0-9a-f]{40}) -->$/m)?.[1]||null;
 const VERDICT=/^[`*]*VERDICT:[ \t]*(APPROVE|REQUEST_CHANGES)[`*]*[ \t]*$/gm;
 // Every verdict line must agree: a quoted injected APPROVE next to a real REQUEST_CHANGES is no approval.
 const verdictOf=review=>{const all=[...review.matchAll(VERDICT)].map(m=>m[1]);return all.length&&all.every(v=>v===all[0])?all[0]:null;};
-// Commands this hook inspects: `gh pr … merge` in any flag order, and `gh api` on a pull request's merge endpoint.
-// No word boundaries: a mention joined to other characters (-Ogh pr merge, gh pr merge5) is inspected too, and since
-// it is not the plain form, refused. Even a mention in text gates the call: text can be written somewhere that runs.
-const MERGE=/gh\s+pr\b[^;&|\n]*merge|gh\s+api\b[^;&|\n]*\/merge/;
+// Commands this hook inspects: `gh pr merge`, `gh pr <flags> merge` with the flags gh accepts before the subcommand,
+// and `gh api` on a pull request's merge endpoint. No leading boundary: a mention joined to other characters
+// (-Ogh pr merge) is inspected too, and since it is not the plain form, refused. `merge` is a whole word, so
+// `gh pr view --json mergeable` passes. Even a mention in text gates the call: text can be written somewhere that runs.
+const MERGE=/gh\s+pr\b(?:\s+-\S+(?:\s+[^-\s]\S*)?)*\s+merge\b|gh\s+api\b[^;&|\n]*\/merge\b/;
+// Bash joins a backslash-newline before it reads a word, so the hook does the same before it looks for merges.
+const joined=command=>command.replace(/\\\r?\n/g,' ');
 
 // Why the merge must wait, or null when the bot's review approves this head.
 function decide(bodies,head){
@@ -73,8 +76,9 @@ const gh=args=>execFileSync('gh',args,{encoding:'utf8',maxBuffer:64<<20});
 function check(input){
  let repo,pr,head;
  if(input.tool_name==='Bash'){
-  if(!MERGE.test(input.tool_input?.command||''))return null;
-  ({repo,pr,head}=target(input.tool_input.command));
+  const command=joined(input.tool_input?.command||'');
+  if(!MERGE.test(command))return null;
+  ({repo,pr,head}=target(command));
  }else{
   repo=input.tool_input.owner+'/'+input.tool_input.repo;pr=String(input.tool_input.pullNumber);
  }
@@ -93,4 +97,4 @@ if(require.main===module){
  catch(error){why='Merge blocked: could not confirm a fresh-eyes review approval ('+(error?.message||error).split('\n')[0]+').';}
  if(why){console.error(why);process.exit(2);}
 }
-module.exports={decide,target,verdictOf,headOf,MARKER,MERGE};
+module.exports={decide,target,verdictOf,headOf,MARKER,MERGE,joined};
