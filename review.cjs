@@ -18,6 +18,7 @@ const CONFIG=process.env.FRESH_EYES_CONFIG||'.fresh-eyes.json';
 const BRIEFS=['CLAUDE.md','AGENTS.md','README.md']; // first one present on the base branch is the brief
 const MAX_DIFF=+process.env.FRESH_EYES_MAX_DIFF||200_000;   // characters of diff inlined
 const MAX_FILES=+process.env.FRESH_EYES_MAX_FILES||120_000; // characters of changed-file text: a chat model has no tools to open the rest
+const TIMEOUT=(+process.env.FRESH_EYES_TIMEOUT||900)*1000; // seconds the model gets to finish its answer
 const MAX_COMMENT=60_000; // GitHub rejects a comment body over 65 536 characters
 const MARKER='<!-- fresh-eyes -->'; // require-review.cjs looks for the same marker, head line and verdict line
 const BOT=process.env.FRESH_EYES_BOT||'github-actions[bot]'; // who the comment is posted as
@@ -156,7 +157,7 @@ async function ask(question){
  const res=await fetch(URL+'/chat/completions',{
   method:'POST',headers,
   body:JSON.stringify({model:MODEL,stream:true,messages:[{role:'system',content:SYSTEM},{role:'user',content:question}]}),
-  signal:AbortSignal.timeout(900_000),
+  signal:AbortSignal.timeout(TIMEOUT),
  });
  if(!res.ok)throw Error('model endpoint '+res.status+' at '+URL+' for '+MODEL+': '+(await res.text()).slice(0,300));
  const decoder=new TextDecoder(),frame=sse();

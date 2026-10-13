@@ -103,7 +103,8 @@ brief or the focuses it is judged by; its edit to the file is reviewed like any 
 | `reuse` | `false` | Reuse the posted verdict for an unchanged head and base (see below) |
 
 `FRESH_EYES_MAX_DIFF` (200 000) and `FRESH_EYES_MAX_FILES` (120 000) cap the characters of diff and of file text
-sent to the model. Set them as `env:` on the action step.
+sent to the model, and `FRESH_EYES_TIMEOUT` (900) the seconds the model gets to answer. Set them as `env:` on the
+action step; raise the timeout as well as the job's `timeout-minutes` for large PRs on a slow model.
 
 ## What the model sees
 
