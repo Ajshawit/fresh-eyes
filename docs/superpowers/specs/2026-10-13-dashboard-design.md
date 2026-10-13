@@ -58,7 +58,7 @@ seconds, minimum 15.
    `MERGEABLE` and whose review approves its current head (`decide([body], headRefOid) === null`), run
    `gh pr merge <n> --repo R --<method> --match-head-commit <headRefOid>`. GitHub refuses the merge if the head moved
    after the check. Outcome (merged, or the error text) is recorded on the PR row as `automerge.last` with a time and
-   shown under the row. A PR whose merge failed is not retried until its head or mergeability changes.
+   shown under the row. A head is attempted once: a PR whose merge failed, or succeeded, is not retried until a push changes its head.
 4. **Review panel**: `GET /api/review?repo=R&pr=N` returns the cached comment body; the page posts it to
    `gh api markdown -f mode=gfm -f context=R -f text=@-` through `GET /api/review?...&html=1` and renders the result
    in a panel beside the list, with the PR link. No comment: the panel says so.
@@ -111,10 +111,10 @@ line as the response and are shown inline.
 
 ## Testing
 
-`test/check.cjs` gains a section that requires `dashboard.cjs` with `DASHBOARD_NO_START=1` and asserts:
+`test/check.cjs` gains a section that requires `dashboard.cjs` (its `require.main` guard keeps the server from starting) and, with `io.gh` replaced by a fake, asserts:
 - `parseComment` on the existing review fixture and on a stale-head and a disagreeing-verdict body;
 - `stages` on fixture PR JSON for each row of the stage table;
 - `shouldMerge` over the cases: label off, draft, closed, `CONFLICTING`, stale head, `REQUEST_CHANGES`, prior failure
   for the same head, and the one passing case;
 - `guard` (the request check) rejects a missing header, an unknown repo and an unknown PR.
-No network, no `gh`. Live behaviour is proven by running it against a real repo.
+Plus `fetchRepo`, `refresh`, `automerge`, `setLabel`, `discover` and the HTTP endpoints against the fake. No GitHub, no real `gh`. Live behaviour is proven by running it against a real repo.
