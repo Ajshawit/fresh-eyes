@@ -131,12 +131,14 @@ assert.match(decide([rev(sha,'REQUEST_CHANGES')],sha),/did not approve/);
 assert.match(decide([MARKER+'\nVERDICT: APPROVE'],sha),/older commit/,'a review with no head line does not count');
 // Which commands the hook inspects at all: null lets it through; a throw refuses it; a target is checked.
 const H=sha,M='--match-head-commit '+H;
-for(const m of ['gh pr view 5','gh pr list','gh pr view 5 --json mergeable,mergeStateStatus','gh pr list --search merge','gh api repos/o/r/pulls/5 --jq .mergeable,.merge_state_status',
+for(const m of ['gh pr view 5','gh pr list','gh pr view 5 --json mergeable,mergeStateStatus','gh pr list --search merge','gh api repos/o/r/pulls/5 --jq .mergeable,.merge_state_status','gh api repos/o/r/pulls/5',
  'gh pr list --search "merge me"','gh pr checks 83 --json name,merge','gh api repos/o/r/pulls/5','git merge main','echo merge','ls'])
  assert.equal(inspect(m),null,'let through: '+m);
 for(const m of ['gh pr -R o/r merge 5 '+M,'gh pr --squash merge 5 -R o/r '+M,'gh api -X PUT repos/o/r/pulls/5/merge','-Ogh pr merge 5 -R o/r '+M,
  'gh api \\\n repos/o/r/pulls/5/merge -X PUT','gh "pr" merge 5 -R o/r '+M,"gh 'pr' 'merge' 5",'gh pr view 5 --json mergeable; gh pr merge 5',
  'gh pr view 5 && echo merge','git commit -m "docs: gh pr merge"','gh pr edit 5 --body merge-ready',
+ 'gh api graphql -f query=mutation{mergePullRequest(input:{pullRequestId:x}){clientMutationId}}','gh api graphql -f query=mutation{enablePullRequestAutoMerge(input:{pullRequestId:x}){clientMutationId}}',
+ 'gh api graphql -f query={repository(owner:o,name:r){pullRequest(number:5){mergeable}}}','gh api -X PUT repos/o/r/pulls/5 --jq .mergeable','gh api repos/o/r/pulls/5/merge --jq .merged',
  "gh pr $'\\x6derge' 5",'gh pr view $PR','gh pr `pick` 5','gh api repos/o/r/pulls/$(cat n)/merge','eval "gh pr view 5"','gh pr vie\\x77 5'])
  assert.throws(()=>inspect(m),undefined,'refused: '+m);
 assert.equal(inspect('echo $HOME; git log'),null,'$ away from gh pr/api is nobody\'s business');
