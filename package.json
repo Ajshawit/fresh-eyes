@@ -1,0 +1,9 @@
+{
+  "name": "fresh-eyes",
+  "version": "1.0.0",
+  "description": "PR review and merge gate by a model on any OpenAI-compatible endpoint. Zero dependencies.",
+  "license": "MIT",
+  "private": true,
+  "engines": {"node": ">=20"},
+  "scripts": {"test": "node test/check.cjs"}
+}

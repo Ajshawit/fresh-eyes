@@ -1,0 +1,7 @@
+{
+  "brief": "docs/BRIEF.md",
+  "focuses": [
+    {"match": "^server/", "focus": "Server security: authentication, input validation at trust boundaries, injection, secrets, rate limits."},
+    {"match": "^test/", "focus": "Tests: do they check the changed behaviour, can they pass while it is broken."}
+  ]
+}

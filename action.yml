@@ -1,0 +1,43 @@
+name: fresh-eyes
+description: Review a pull request with a model behind any OpenAI-compatible endpoint, post one comment, and fail unless it approves.
+author: ajshawit
+branding:
+  icon: eye
+  color: purple
+inputs:
+  model:
+    description: Model name sent to the endpoint (for ollama, a pulled model such as glm-5.3:cloud or qwen3-coder).
+    required: true
+  url:
+    description: OpenAI-compatible base URL ending in /v1.
+    default: http://127.0.0.1:11434/v1
+  api-key:
+    description: Bearer token for the endpoint. Leave empty for a local daemon.
+    default: ''
+  config:
+    description: Path of the review config, read from the base branch.
+    default: .fresh-eyes.json
+  out:
+    description: Where the review markdown is written.
+    default: output/review.md
+  github-token:
+    description: Token used to post the comment. Needs pull-requests write.
+    default: ${{ github.token }}
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      # The reviewer runs from this pinned action, never from the PR, so a PR cannot edit it into approving itself.
+      run: node "$GITHUB_ACTION_PATH/review.cjs" "$OUT"
+      env:
+        REPO_ROOT: ${{ github.workspace }}
+        PR: ${{ github.event.pull_request.number }}
+        REPO: ${{ github.repository }}
+        BASE_REF: ${{ github.event.pull_request.base.ref }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        FRESH_EYES_MODEL: ${{ inputs.model }}
+        FRESH_EYES_URL: ${{ inputs.url }}
+        FRESH_EYES_API_KEY: ${{ inputs.api-key }}
+        FRESH_EYES_CONFIG: ${{ inputs.config }}
+        OUT: ${{ inputs.out }}

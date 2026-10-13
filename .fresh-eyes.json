@@ -1,0 +1,8 @@
+{
+  "brief": "README.md",
+  "focuses": [
+    {"match": "^(review|require-review)\\.cjs$", "focus": "Gate safety: can a PR, a crafted comment or a crafted shell command get past the review or the merge hook? Every parse must fail closed."},
+    {"match": "^action\\.yml$", "focus": "CI security: untrusted PR input interpolated into run:, token permissions, which code runs from the PR and which from the action."},
+    {"match": "^test/", "focus": "Tests: do they check the changed behaviour, can they pass while it is broken."}
+  ]
+}

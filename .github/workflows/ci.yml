@@ -1,0 +1,21 @@
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+      - run: node test/check.cjs
+      # The reviewer's own argument handling, without a model: on main the diff is empty and approves itself.
+      - if: github.event_name == 'push'
+        run: git fetch origin main && BASE_REF=main node review.cjs --dry
