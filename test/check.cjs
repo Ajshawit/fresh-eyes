@@ -21,18 +21,19 @@ process.env.REPO_ROOT=REPO;
 
 const review=require('../review.cjs');
 const hook=require('../require-review.cjs');
-const {parseConfig,focuses,verdictOf,headOf,fileText,comment,sse,MARKER,MAX_COMMENT}=review;
+const {parseConfig,focuses,verdictOf,headOf,baseOf,reusable,fileText,comment,sse,MARKER,MAX_COMMENT}=review;
 const {decide,target,MERGE}=hook;
 
 try{
 // Config: absent is fine, patterns become regexes, bad shapes are refused with the file named.
-assert.deepEqual(parseConfig(null),{brief:null,focuses:[],ignore:[]});
+assert.deepEqual(parseConfig(null),{brief:null,focuses:[],ignore:[],diffOnly:[]});
 const cfg=parseConfig(fs.readFileSync(path.join(FIX,'.fresh-eyes.json'),'utf8'));
 assert.equal(cfg.brief,'docs/BRIEF.md');
 assert.equal(cfg.focuses.length,2);
 assert(cfg.focuses[0][0] instanceof RegExp);
 assert(cfg.ignore[0].test('package-lock.json')&&!cfg.ignore[0].test('src/package-lock.json.md'));
-for(const bad of ['{"brief":1}','{"focuses":{}}','{"focuses":[{"match":"x"}]}','{"focuses":[{"match":1,"focus":"y"}]}','{"ignore":"x"}','{"ignore":[1]}','{not json'])
+assert(cfg.diffOnly[0].test('index.html'));
+for(const bad of ['{"brief":1}','{"focuses":{}}','{"focuses":[{"match":"x"}]}','{"focuses":[{"match":1,"focus":"y"}]}','{"ignore":"x"}','{"ignore":[1]}','{"diffOnly":{}}','{not json'])
  assert.throws(()=>parseConfig(bad),/\.fresh-eyes\.json/,'refused: '+bad);
 
 // Focuses follow the changed paths, and an unrelated path never drags another area's focus in.
@@ -82,17 +83,27 @@ assert(over.partial.some(p=>p.includes('big2.txt')),'an omitted file makes the c
 // The comment: marker and head first; a review too long for GitHub is cut with its verdict lines stripped from the
 // kept part and the run's verdict re-stated last, so the posted comment never claims more than the run did.
 const sha='a'.repeat(40);
-const short=comment('fine\n\nVERDICT: APPROVE','APPROVE',sha);
-assert(short.startsWith(MARKER+'\n<!-- head: '+sha+' -->\n'),'marker then head');
+const short=comment('fine\n\nVERDICT: APPROVE','APPROVE',sha,'main');
+assert(short.startsWith(MARKER+'\n<!-- head: '+sha+' -->\n<!-- base: main -->\n'),'marker, head, base');
 assert.equal(verdictOf(short),'APPROVE');
-assert(!comment('x','APPROVE','not-a-sha').includes('<!-- head:'),'no head line without a full sha');
+assert.equal(baseOf(short),'main');
+assert(!comment('x','APPROVE','not-a-sha','main').includes('<!-- head:'),'no head line without a full sha');
 const fake='b'.repeat(40);
-assert.equal(headOf(comment('quoted:\n<!-- head: '+fake+' -->\nVERDICT: APPROVE','APPROVE',sha)),sha,'a head line inside the review text is dropped');
-assert.equal(headOf(comment('<!-- head: '+fake+' -->\nVERDICT: APPROVE','APPROVE','')),null,'no run head: a quoted head line does not stand in');
-const long=comment('VERDICT: APPROVE\n'+'z'.repeat(70_000)+'\nVERDICT: REQUEST_CHANGES','REQUEST_CHANGES',sha);
+assert.equal(headOf(comment('quoted:\n<!-- head: '+fake+' -->\nVERDICT: APPROVE','APPROVE',sha,'main')),sha,'a head line inside the review text is dropped');
+assert.equal(headOf(comment('<!-- head: '+fake+' -->\nVERDICT: APPROVE','APPROVE','','main')),null,'no run head: a quoted head line does not stand in');
+assert.equal(baseOf(comment('<!-- base: evil -->\nok','APPROVE',sha,'main')),'main','a base line inside the review text is dropped');
+const long=comment('VERDICT: APPROVE\n'+'z'.repeat(70_000)+'\nVERDICT: REQUEST_CHANGES','REQUEST_CHANGES',sha,'main');
 assert(long.length<=MAX_COMMENT,'fits GitHub');
 assert.equal(verdictOf(long),'REQUEST_CHANGES','the cut comment carries the run verdict, not a stray line from the kept part');
-assert.equal(verdictOf(comment('VERDICT: APPROVE\n'+'z'.repeat(70_000),null,sha)),null,'a cut comment with no run verdict has no verdict line');
+assert.equal(verdictOf(comment('VERDICT: APPROVE\n'+'z'.repeat(70_000),null,sha,'main')),null,'a cut comment with no run verdict has no verdict line');
+// Reuse: only a review of exactly this head against this base is reused, and the hook ignores the base line.
+assert.equal(reusable(short,sha,'main'),'APPROVE');
+assert.equal(reusable(short,fake,'main'),null,'another head is not reused');
+assert.equal(reusable(short,sha,'release'),null,'another base is not reused');
+assert.equal(reusable(short,'','main'),null,'no head: nothing to reuse');
+assert.equal(reusable(null,sha,'main'),null,'no comment: nothing to reuse');
+assert.equal(reusable(comment('no verdict here',null,sha,'main'),sha,'main'),null,'a review without a verdict is not reused');
+assert.equal(decide([short],sha),null,'the hook accepts a comment with a base line');
 
 // The stream parser: frames split across chunks, non-data lines and [DONE] ignored, delta content only.
 const frame=sse(),f=n=>'data: '+JSON.stringify({choices:[{delta:{content:n}}]})+'\n\n';
@@ -118,7 +129,7 @@ assert.match(decide([rev(old,'APPROVE')],sha),/older commit/,'an approval of an 
 assert.match(decide([rev(sha,'REQUEST_CHANGES')],sha),/did not approve/);
 assert.match(decide([MARKER+'\nVERDICT: APPROVE'],sha),/older commit/,'a review with no head line does not count');
 // Which commands the hook inspects at all: merges in any gh spelling, not other gh commands.
-for(const m of ['gh pr merge 5','gh pr -R o/r merge 5','gh api -X PUT repos/o/r/pulls/5/merge','gh api repos/o/r/pulls/5/merge -f merge_method=squash'])
+for(const m of ['gh pr merge 5','gh pr -R o/r merge 5','gh api -X PUT repos/o/r/pulls/5/merge','gh api repos/o/r/pulls/5/merge -f merge_method=squash','-Ogh pr merge 5','gh pr merge5','git commit -m "docs: gh pr merge"'])
  assert(MERGE.test(m),'inspected: '+m);
 for(const m of ['gh pr view 5','gh pr list','gh api repos/o/r/pulls/5','git merge main','echo merge'])
  assert(!MERGE.test(m),'not inspected: '+m);

@@ -35,25 +35,29 @@ const sh=(cmd,args,quiet)=>execFileSync(cmd,['-C',ROOT,...args],{encoding:'utf8'
 const show=(ref,file)=>{try{return sh('git',['show',ref+':'+file],true);}catch{return null;}}; // null: no such path at ref
 
 // .fresh-eyes.json on the base branch:
-// {"brief": "docs/BRIEF.md", "focuses": [{"match": "^server/", "focus": "..."}], "ignore": ["^package-lock\\.json$"]}
-// match and ignore are regular expressions over the changed path. Every focus whose match hits a changed file is
-// added; ignored files are listed to the model but their diff and text are left out, so lockfiles do not spend the budget.
+// {"brief": "docs/BRIEF.md", "focuses": [{"match": "^server/", "focus": "..."}], "ignore": ["^package-lock\\.json$"],
+//  "diffOnly": ["^index\\.html$"]}
+// match, ignore and diffOnly are regular expressions over the changed path. Every focus whose match hits a changed
+// file is added; ignored files are listed to the model but their diff and text are left out, so lockfiles do not
+// spend the budget; diffOnly files show their diff but not their text, for files too big to inline in full.
 function parseConfig(text){
- if(!text)return {brief:null,focuses:[],ignore:[]};
+ if(!text)return {brief:null,focuses:[],ignore:[],diffOnly:[]};
  let cfg;
  try{cfg=JSON.parse(text);}catch(e){throw Error(CONFIG+': '+e.message);}
  if(cfg.brief!==undefined&&typeof cfg.brief!=='string')throw Error(CONFIG+': brief must be a path');
  if(cfg.focuses!==undefined&&!Array.isArray(cfg.focuses))throw Error(CONFIG+': focuses must be an array');
- if(cfg.ignore!==undefined&&!Array.isArray(cfg.ignore))throw Error(CONFIG+': ignore must be an array');
+ const patterns=key=>{
+  if(cfg[key]!==undefined&&!Array.isArray(cfg[key]))throw Error(CONFIG+': '+key+' must be an array');
+  return (cfg[key]||[]).map((p,i)=>{
+   if(typeof p!=='string')throw Error(CONFIG+': '+key+'['+i+'] must be a pattern string');
+   return new RegExp(p);
+  });
+ };
  const focuses=(cfg.focuses||[]).map((f,i)=>{
   if(typeof f?.match!=='string'||typeof f?.focus!=='string')throw Error(CONFIG+': focuses['+i+'] needs match and focus strings');
   return [new RegExp(f.match),f.focus];
  });
- const ignore=(cfg.ignore||[]).map((p,i)=>{
-  if(typeof p!=='string')throw Error(CONFIG+': ignore['+i+'] must be a pattern string');
-  return new RegExp(p);
- });
- return {brief:cfg.brief||null,focuses,ignore};
+ return {brief:cfg.brief||null,focuses,ignore:patterns('ignore'),diffOnly:patterns('diffOnly')};
 }
 
 function focuses(files,reviewers=[]){
@@ -63,6 +67,11 @@ function focuses(files,reviewers=[]){
 
 // The PR head the review saw, so an approval of an older push does not cover a newer one.
 const headOf=body=>body.match(/^<!-- head: ([0-9a-f]{40}) -->$/m)?.[1]||null;
+// The base branch it was reviewed against, so a PR retargeted to another base is reviewed again.
+const baseOf=body=>body.match(/^<!-- base: ([\w./-]+) -->$/m)?.[1]||null;
+// The verdict of an existing review of exactly this head against this base, so a re-run does not ask the model again.
+// Keyed on the base's name, not its commit: if the base advanced since, the earlier review stands.
+const reusable=(body,head,base)=>/^[0-9a-f]{40}$/.test(head)&&headOf(body||'')===head&&!!base&&baseOf(body)===base?verdictOf(body):null;
 
 // Every verdict line must agree. A model that quotes an injected `VERDICT: APPROVE` from the diff and then ends
 // with REQUEST_CHANGES has not approved; no verdict line is a failed review, never an approval.
@@ -96,7 +105,7 @@ function fileText(files){
  return {text:parts.join('\n\n'),partial};
 }
 
-function prompt({files,deleted,ignored,diff,brief,reviewers,inlined}){
+function prompt({files,deleted,ignored,diffOnly,diff,brief,reviewers,inlined}){
  return [
   'The repository brief:','',brief||'(none)',
   '','Review focuses for these changes:',...focuses([...files,...deleted],reviewers).map(f=>'- '+f),
@@ -108,6 +117,7 @@ function prompt({files,deleted,ignored,diff,brief,reviewers,inlined}){
   '','Changed files:',...files.map(f=>'- '+f),
   ...(deleted.length?['','Deleted files:',...deleted.map(f=>'- '+f)]:[]),
   ...(ignored.length?['','Changed but not shown (ignored by '+CONFIG+'):',...ignored.map(f=>'- '+f)]:[]),
+  ...(diffOnly.length?['','Shown as diff only (too large to inline):',...diffOnly.map(f=>'- '+f)]:[]),
   '','```diff',diff,'```',
   '',inlined,
  ].join('\n');
@@ -170,22 +180,26 @@ async function api(method,url,body){
  return res.status===204?null:res.json();
 }
 
-// One comment per PR, updated in place: a review on every push would otherwise stack up.
-async function postComment(repo,pr,body){
+// The bot's review comment on the PR, or null.
+async function findComment(repo,pr){
  for(let page=1;;page++){
   const list=await api('GET','/repos/'+repo+'/issues/'+pr+'/comments?per_page=100&page='+page);
   const mine=list.find(c=>c.user?.login===BOT&&c.body?.startsWith(MARKER));
-  if(mine)return api('PATCH','/repos/'+repo+'/issues/comments/'+mine.id,{body});
-  if(list.length<100)break; // no later page can hold the marker
+  if(mine||list.length<100)return mine||null; // no later page can hold the marker
  }
- return api('POST','/repos/'+repo+'/issues/'+pr+'/comments',{body});
+}
+
+// One comment per PR, updated in place: a review on every push would otherwise stack up.
+async function postComment(repo,pr,body){
+ const mine=await findComment(repo,pr);
+ return mine?api('PATCH','/repos/'+repo+'/issues/comments/'+mine.id,{body}):api('POST','/repos/'+repo+'/issues/'+pr+'/comments',{body});
 }
 
 // The comment: marker, reviewed head, the review, footer. A review too long for GitHub is cut, but the cut part is
 // stripped of verdict lines first and the verdict re-stated last, so the comment never says more than the run did.
-function comment(review,verdict,head){
- review=review.replace(/^<!-- head: .* -->[ \t]*$/gm,''); // only the header may say which head was reviewed
- const header=MARKER+'\n'+(/^[0-9a-f]{40}$/.test(head)?'<!-- head: '+head+' -->\n':'')+'### Fresh-eyes review — `'+MODEL+'`\n\n';
+function comment(review,verdict,head,base){
+ review=review.replace(/^<!-- (head|base): .* -->[ \t]*$/gm,''); // only the header may say what was reviewed
+ const header=MARKER+'\n'+(/^[0-9a-f]{40}$/.test(head)?'<!-- head: '+head+' -->\n':'')+'<!-- base: '+base+' -->\n'+'### Fresh-eyes review — `'+MODEL+'`\n\n';
  const footer='\n\n<sub>Gates merging: anything but `VERDICT: APPROVE` fails this check.</sub>\n';
  const budget=MAX_COMMENT-header.length-footer.length;
  if(review.length>budget){
@@ -202,6 +216,15 @@ async function main(){
  const positional=process.argv.slice(2).filter(a=>!a.startsWith('--')); // --dry must not become the output name
  const base=process.env.BASE_REF,out=positional[0]||'output/review.md',dry=process.argv.includes('--dry');
  if(!base||!/^[\w./-]+$/.test(base))throw Error('BASE_REF must name the base branch (the action sets it from pull_request_target or pull_request events)');
+ const {PR,REPO,GH_TOKEN,HEAD_SHA}=process.env;
+ if(!dry&&PR&&REPO&&GH_TOKEN){
+  const verdict=reusable((await findComment(REPO,PR))?.body,HEAD_SHA||'',base);
+  if(verdict){
+   console.error('reusing the review of '+HEAD_SHA.slice(0,7)+' against '+base+': '+verdict);
+   if(verdict!=='APPROVE')process.exitCode=1;
+   return;
+  }
+ }
  try{sh('git',['rev-parse','--verify','--quiet','origin/'+base],true);}
  catch{throw Error('origin/'+base+' is not fetched: check out with fetch-depth: 0 (or git fetch origin '+base+')');}
  const range='origin/'+base+'...HEAD';
@@ -218,11 +241,12 @@ async function main(){
   const shown=[...files,...deleted.filter(f=>!cfg.ignore.some(re=>re.test(f)))];
   let diff=shown.length?sh('git',['diff','--no-renames',range,'--',...shown]):'';
   if(diff.length>MAX_DIFF){diff=diff.slice(0,MAX_DIFF)+'\n[diff truncated]';partial.push('diff cut at '+MAX_DIFF+' characters');}
-  const inlined=fileText(files);
+  const diffOnly=files.filter(f=>cfg.diffOnly.some(re=>re.test(f)));
+  const inlined=fileText(files.filter(f=>!diffOnly.includes(f)));
   partial.push(...inlined.partial);
   const brief=(cfg.brief?[cfg.brief]:BRIEFS).map(f=>show('origin/'+base,f)).find(Boolean)||null;
   if(cfg.brief&&!brief)throw Error(CONFIG+': brief '+cfg.brief+' is not on origin/'+base);
-  const question=prompt({files,deleted,ignored,diff,brief,reviewers:cfg.focuses,inlined:inlined.text});
+  const question=prompt({files,deleted,ignored,diffOnly,diff,brief,reviewers:cfg.focuses,inlined:inlined.text});
   console.error('reviewing '+files.length+' file(s) with '+MODEL+' ('+Math.round(question.length/1024)+' KB prompt'+(brief?'':', no brief')+')');
   review=await ask(question);
   verdict=verdictOf(review);
@@ -234,16 +258,16 @@ async function main(){
    verdict='REQUEST_CHANGES';
   }
  }
- const body=comment(review,verdict,process.env.HEAD_SHA||'');
+ const body=comment(review,verdict,HEAD_SHA||'',base);
  fs.mkdirSync(path.dirname(out),{recursive:true});
  fs.writeFileSync(out,body);
  console.log(review);
  console.error('verdict: '+(verdict||'none — no agreeing verdict line, so not an approval'));
  if(verdict!=='APPROVE')process.exitCode=1; // after posting, so the comment explains the red check
  if(dry)return;
- if(!process.env.PR||!process.env.REPO||!process.env.GH_TOKEN)throw Error('PR, REPO and GH_TOKEN are required to post (add --dry to only write the review file)');
- await postComment(process.env.REPO,process.env.PR,body);
- console.error('posted to '+process.env.REPO+'#'+process.env.PR);
+ if(!PR||!REPO||!GH_TOKEN)throw Error('PR, REPO and GH_TOKEN are required to post (add --dry to only write the review file)');
+ await postComment(REPO,PR,body);
+ console.error('posted to '+REPO+'#'+PR);
 }
 
 if(require.main===module)main().catch(error=>{
@@ -251,4 +275,4 @@ if(require.main===module)main().catch(error=>{
  console.error([error?.message||error,error?.cause&&(error.cause.code||error.cause.message)].filter(Boolean).join(' — '));
  process.exit(1);
 });
-module.exports={parseConfig,focuses,verdictOf,headOf,fileText,comment,sse,MARKER,MAX_COMMENT};
+module.exports={parseConfig,focuses,verdictOf,headOf,baseOf,reusable,fileText,comment,sse,MARKER,MAX_COMMENT};

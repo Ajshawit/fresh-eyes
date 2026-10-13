@@ -71,7 +71,8 @@ brief or the focuses it is judged by; its edit to the file is reviewed like any 
     {"match": "^\\.github/", "focus": "CI security: untrusted input interpolated into run:, token permissions, the fork guard on self-hosted jobs."},
     {"match": "^tests?/", "focus": "Tests: do they check the changed behaviour, can they pass while it is broken."}
   ],
-  "ignore": ["^package-lock\\.json$", "\\.snap$"]
+  "ignore": ["^package-lock\\.json$", "\\.snap$"],
+  "diffOnly": ["^dist/bundle\\.js$"]
 }
 ```
 
@@ -82,6 +83,8 @@ brief or the focuses it is judged by; its edit to the file is reviewed like any 
   the server.
 - `ignore` names generated files. They are listed to the model as changed, but their diff and text are left out so a
   lockfile does not spend the budget. Because the list lives on the base branch, a PR cannot hide its own files.
+- `diffOnly` names files too large to inline in full. Their diff is shown, their text is not, and that does not count
+  as incomplete coverage. Use it for a hand-written file that is simply huge; use `ignore` for generated ones.
 
 ### Action inputs
 
@@ -109,6 +112,10 @@ The model is asked for findings as `**SEVERITY** file:line — what breaks and w
 one line `VERDICT: APPROVE` or `VERDICT: REQUEST_CHANGES`. A verdict line must stand alone at column 0 (backticks
 or bold around it are fine). Every verdict line in the review must agree: a model that quotes an injected
 `VERDICT: APPROVE` from a file and then ends with REQUEST_CHANGES has not approved. No verdict line is not an approval.
+
+**A review is reused, not repeated.** The comment records the head sha and the base branch. A re-run for the same
+head against the same base reuses that verdict without asking the model, so a label event or a manual re-run is free.
+A new push, or a PR retargeted to another base, is reviewed again.
 
 **Coverage is part of the verdict.** If the diff had to be cut or a changed file could not be shown in full, the run
 does not approve, whatever the model said, and the comment explains what was missing and how to fix it: raise the
