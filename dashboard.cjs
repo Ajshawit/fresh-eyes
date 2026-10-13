@@ -47,20 +47,24 @@ const labelled=(pr,label)=>(pr.labels||[]).some(l=>l?.name===label);
 const tried=pr=>pr.automerge?.last&&pr.automerge.last.head===pr.headRefOid?pr.automerge.last:null;
 
 // Every condition the loop needs before it runs gh pr merge. The approval itself is the hook's rule, decide().
+// MERGEABLE only means no conflicts; CLEAN or HAS_HOOKS is GitHub saying branch protection (required checks) is met.
+const READY=['CLEAN','HAS_HOOKS'];
 function shouldMerge(pr,comment,label){
- if(!pr||pr.state!=='OPEN'||pr.isDraft||pr.mergeable!=='MERGEABLE'||!labelled(pr,label))return false;
+ if(!pr||pr.state!=='OPEN'||pr.isDraft||pr.mergeable!=='MERGEABLE'||!READY.includes(pr.mergeStateStatus)||!labelled(pr,label))return false;
  if(!comment||decide([comment.body],pr.headRefOid||'')!==null)return false;
  return !tried(pr);
 }
 
-// The review job in the head's check rollup: a CheckRun (status/conclusion) or a commit status (state).
-const REVIEW_JOB=/fresh-eyes|review/i;
+// The review job in the head's check rollup: a CheckRun (status/conclusion) or a commit status (state). A job named
+// fresh-eyes wins; otherwise the word review on its own, so deploy-preview and the like never count.
 function checkStage(pr){
- const run=(pr.statusCheckRollup||[]).find(r=>REVIEW_JOB.test(r.name||r.context||''));
+ const rollup=pr.statusCheckRollup||[],named=re=>rollup.find(r=>re.test(r.name||r.context||''));
+ const run=named(/fresh-eyes/i)||named(/\breview\b/i);
  if(!run)return 'none';
  if(run.status&&run.status!=='COMPLETED')return 'pending';
  if(run.state==='PENDING'||run.state==='EXPECTED')return 'pending';
- return (run.conclusion||run.state)==='SUCCESS'?'pass':'fail';
+ const end=run.conclusion||run.state;
+ return end==='SUCCESS'?'pass':end==='SKIPPED'||end==='NEUTRAL'?'none':'fail'; // a skipped review is no result, not a failure
 }
 
 // The five chips of a row. Pure: pr as gh lists it (plus pr.automerge from the loop), the parsed comment or null.
@@ -79,7 +83,8 @@ const PR_FIELDS='number,title,url,author,createdAt,updatedAt,isDraft,state,merge
 
 // All of GitHub, through gh: async so the page stays responsive while a refresh walks the repos. Tests replace it.
 const io={gh:(args,input)=>new Promise((resolve,reject)=>{
- const child=execFile('gh',args,{encoding:'utf8',maxBuffer:64<<20},(error,stdout,stderr)=>error?reject(Object.assign(error,{stderr})):resolve(stdout));
+ // The timeout: a hung gh would otherwise hold the tick queue, and every refresh and merge behind it, for good.
+ const child=execFile('gh',args,{encoding:'utf8',maxBuffer:64<<20,timeout:120_000},(error,stdout,stderr)=>error?reject(Object.assign(error,{stderr})):resolve(stdout));
  child.stdin.on('error',()=>{}); // a gh that exits before reading its input is reported by the callback, not an EPIPE crash
  child.stdin.end(input??'');
 })};
@@ -121,8 +126,10 @@ async function refresh(state,opts,only){
 }
 
 // Merges pinned to the head that was checked: gh refuses if a push landed in between. One attempt per head.
-async function automerge(state,opts){
- for(const [repo,r] of Object.entries(state.repos)){
+// `only` limits the pass to the repos a refresh just read, as refresh() does.
+async function automerge(state,opts,only){
+ for(const repo of only||Object.keys(state.repos)){
+  const r=state.repos[repo];
   if(r.error)continue; // rows kept from before a failed refresh are stale: never merge from them
   for(const x of r.rows){
    if(!shouldMerge(x.pr,x.comment,opts.label))continue;
@@ -178,8 +185,8 @@ const status=(code,message)=>Object.assign(Error(message),{status:code});
 
 // Only a repo this run covers and a PR it has listed can be acted on: anything else is a bad request, not a gh call.
 function find(state,repo,pr){
+ if(!Object.hasOwn(state.repos,repo))throw status(400,'unknown repo'); // own keys only: ?repo=constructor is not a repo
  const r=state.repos[repo];
- if(!r)throw status(400,'unknown repo');
  const x=r.rows.find(y=>y.pr.number===pr);
  if(!x)throw status(400,'unknown pr');
  return x;
@@ -205,18 +212,22 @@ async function handle(req,res,state,opts,tick){
   if(url.pathname==='/'){res.writeHead(200,{'content-type':'text/html; charset=utf-8'});return res.end(PAGE);}
   if(url.pathname==='/api/state')return json(200,publicState(state,opts));
   if(url.pathname==='/api/review'){
+   const wantHtml=url.searchParams.get('html')==='1';
+   if(wantHtml)guard(req); // rendering spends a gh call: only the page, which sends the header, may ask for it
    const repo=url.searchParams.get('repo'),x=find(state,repo,+url.searchParams.get('pr'));
    const body=x.comment?.body||null;
-   const html=body&&url.searchParams.get('html')==='1'?await io.gh(['api','markdown','--input','-'],JSON.stringify({text:body,mode:'gfm',context:repo})):null;
+   const html=body&&wantHtml?await io.gh(['api','markdown','--input','-'],JSON.stringify({text:body,mode:'gfm',context:repo})):null;
    return json(200,{body,html,url:x.pr.url});
   }
  }else if(req.method==='POST'){
   guard(req);
   let data;
   try{data=JSON.parse(await readBody(req)||'{}');}catch{throw status(400,'body must be JSON');}
+  if(!data||typeof data!=='object'||Array.isArray(data))throw status(400,'body must be a JSON object');
   if(url.pathname==='/api/refresh'){await tick();return json(200,{ok:true});}
   if(url.pathname==='/api/label'){
    const x=find(state,data.repo,data.pr);
+   if(data.on)delete state.merges[data.repo+'#'+x.pr.number]; // re-labelling is the operator's retry for a head that failed
    await setLabel(data.repo,x.pr.number,!!data.on,opts.label);
    await tick([data.repo]);
    return json(200,{ok:true});
@@ -229,6 +240,7 @@ function serve(state,opts,tick){
  const server=http.createServer((req,res)=>handle(req,res,state,opts,tick).catch(e=>{
   res.writeHead(e.status||500,{'content-type':'application/json'});res.end(JSON.stringify({error:firstLine(e)}));
  }));
+ server.on('error',e=>{console.error(firstLine(e));process.exit(1);}); // a busy port is one line, not a stack trace
  server.listen(opts.port,'127.0.0.1');
  return server;
 }
@@ -302,7 +314,7 @@ function draw(){
 }
 async function show(repo,pr){
  selected=repo+'#'+pr.number;draw();
- const rv=await (await fetch('/api/review?repo='+encodeURIComponent(repo)+'&pr='+pr.number+'&html=1')).json();
+ const rv=await (await fetch('/api/review?repo='+encodeURIComponent(repo)+'&pr='+pr.number+'&html=1',{headers:{[HEADER]:'1'}})).json();
  const link=document.getElementById('link');link.replaceChildren();const a=el('a','',repo+'#'+pr.number);a.href=rv.url;a.target='_blank';a.rel='noopener';link.append(a);
  document.getElementById('hint').textContent='';
  const box=document.getElementById('review');box.replaceChildren();
@@ -322,7 +334,7 @@ async function main(){
  // One queue for timer ticks, the refresh button and label clicks: no two refreshes or merge passes ever overlap.
  // The timer skips while anything is queued or running, so a slow refresh never builds a backlog.
  let chain=Promise.resolve(),pending=0;
- const tick=only=>{pending++;const run=chain.then(()=>refresh(state,opts,only)).then(()=>automerge(state,opts)).finally(()=>pending--);chain=run.catch(()=>{});return run;};
+ const tick=only=>{pending++;const run=chain.then(()=>refresh(state,opts,only)).then(()=>automerge(state,opts,only)).finally(()=>pending--);chain=run.catch(()=>{});return run;};
  const server=serve(state,opts,tick);
  server.on('listening',()=>console.error('fresh-eyes dashboard on http://127.0.0.1:'+server.address().port+' — '+opts.repos.length+' repo(s), refresh every '+opts.every+'s, label '+opts.label+', merge --'+opts.method));
  await tick();

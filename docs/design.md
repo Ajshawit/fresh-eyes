@@ -5,7 +5,8 @@ Date: 2026-10-13. Extracted from a single-repo CI harness into a reusable GitHub
 ## Goal
 
 An independent model reviews every pull request and can block the merge. The PR must not be able to change how it is
-judged. The whole thing stays two dependency-free Node files so it can be read in one sitting and vendored by hand.
+judged. The whole thing stays three dependency-free Node files (the reviewer, the hook, and an optional local
+dashboard) so it can be read in one sitting and vendored by hand.
 
 ## Components
 

@@ -8,7 +8,8 @@ ends with a verdict line, and the job **fails unless the verdict is `APPROVE`**,
 cannot merge past a review that found a CRITICAL or HIGH problem. A companion hook for Claude Code stops coding agents
 from running `gh pr merge` until the review of the exact head commit approves.
 
-Zero dependencies. Two files. Node 20 or newer. It executes nothing from the pull request.
+Zero dependencies. Three files: the reviewer, the hook, and an optional local dashboard. Node 20 or newer. It
+executes nothing from the pull request.
 
 Built for repositories where an agent writes most of the code: the author's model should not be the only reviewer,
 and the gate should be something the PR itself cannot edit.
@@ -174,9 +175,11 @@ to that login for the hook, and the `bot` input for the action.
 
 `dashboard.cjs` is a local page showing every pull request's path through the gate across your repositories:
 opened, review check, verdict with CRITICAL/HIGH counts, automerge, merged. Click a row to read the review. A
-button adds or removes an `automerge` label; while the dashboard runs, a labelled PR that is open, not a draft and mergeable is merged as soon as the
-review comment approves its current head, with `--match-head-commit` so a push in between is refused. A head is
-attempted once: after a merge succeeds or fails, it is not retried until a push changes the head.
+button adds or removes an `automerge` label; while the dashboard runs, a labelled PR that is open, not a draft and
+mergeable is merged as soon as the review comment approves its current head and GitHub reports the PR clean, so
+branch protection and required checks are respected. The merge uses `--match-head-commit`, so a push in between is
+refused. A head is attempted once: after a merge succeeds or fails, it is not retried until a push changes the head
+or you label it again.
 
 ```bash
 node dashboard.cjs --repo owner/name --repo owner/other     # http://127.0.0.1:7331
@@ -190,7 +193,8 @@ The merge rule is the hook's: a comment by the bot login, for exactly the curren
 `APPROVE`. Like `reuse: true` it trusts the posted comment, so only automerge repositories where no other
 workflow's token can post as that bot. The server binds to 127.0.0.1, refuses requests whose Host header is not
 `127.0.0.1:<port>` or `localhost:<port>` (so DNS rebinding cannot reach it), and refuses state changes without a
-custom header, so a web page you visit cannot label or merge through it.
+custom header, so a web page you visit cannot label or merge through it. Any local process that can reach
+127.0.0.1 can, though: do not leave it running on a shared machine or a CI runner host.
 
 ## Running it by hand
 

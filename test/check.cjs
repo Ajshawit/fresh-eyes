@@ -197,6 +197,8 @@ assert.equal(stages({...prs[0],labels:[]},approve,'automerge').automerge,'off');
 assert.equal(stages({...prs[0],statusCheckRollup:[]},approve,'automerge').check,'none');
 assert.equal(stages({...prs[0],statusCheckRollup:[{__typename:'CheckRun',name:'lint',status:'COMPLETED',conclusion:'SUCCESS'}]},approve,'automerge').check,'none','only the review job counts');
 assert.equal(stages({...prs[0],statusCheckRollup:[{__typename:'StatusContext',context:'review',state:'PENDING'}]},approve,'automerge').check,'pending');
+assert.equal(stages({...prs[0],statusCheckRollup:[{__typename:'StatusContext',context:'netlify/deploy-preview',state:'SUCCESS'},{__typename:'CheckRun',name:'review',status:'IN_PROGRESS',conclusion:null}]},approve,'automerge').check,'pending','deploy-preview is not the review');
+assert.equal(stages({...prs[0],statusCheckRollup:[{__typename:'CheckRun',name:'review',status:'COMPLETED',conclusion:'SKIPPED'}]},approve,'automerge').check,'none','a skipped review is no result');
 const failed={last:{head:H1,ok:false,at:'2026-10-13T11:00:00Z',message:'conflict'}};
 assert.equal(stages({...prs[0],automerge:failed},approve,'automerge').automerge,'failed');
 assert.equal(stages({...prs[0],automerge:{last:{...failed.last,ok:true}}},approve,'automerge').automerge,'merged');
@@ -211,6 +213,7 @@ for(const [why,pr,cm] of [['no label',{...prs[0],labels:[]},approve],['draft',{.
  ['merged',prs[2],approve],['conflicting',{...prs[0],mergeable:'CONFLICTING'},approve],['unknown mergeability',{...prs[0],mergeable:'UNKNOWN'},approve],
  ['stale head',prs[0],parseComment(approve.body.replace(H1,'9'.repeat(40)))],['no head',prs[0],noHead],['request changes',prs[0],c],['no comment',prs[0],null],
  ['disagreeing verdicts',prs[0],parseComment(body.replace('VERDICT: REQUEST_CHANGES','VERDICT: APPROVE\nVERDICT: REQUEST_CHANGES'))],
+ ['checks pending',{...prs[0],mergeStateStatus:'BLOCKED'},approve],['behind base',{...prs[0],mergeStateStatus:'BEHIND'},approve],
  ['already tried this head',{...prs[0],automerge:failed},approve],['already merged this head',{...prs[0],automerge:{last:{...failed.last,ok:true}}},approve]])
  assert.equal(shouldMerge(pr,cm,'automerge'),false,'no merge: '+why);
 assert.equal(shouldMerge(prs[0],approve,'ship'),false,'a different label name does not count');
@@ -338,17 +341,22 @@ try{
  assert.equal(st.repos['o/r'].rows[0].stages.verdict,'APPROVE');
  assert.deepEqual(st.repos['o/r'].rows[0].pr.labels,['automerge']);
  assert.equal(st.repos['o/r'].rows[0].comment,undefined,'bodies are fetched per PR, not shipped with the state');
- const rv=await (await get('/api/review?repo=o/r&pr=1&html=1')).json();
+ assert.equal((await get('/api/review?repo=o/r&pr=1&html=1')).status,403,'rendering needs the header');
+ const rv=await (await fetch(base+'/api/review?repo=o/r&pr=1&html=1',{headers:{[HEADER]:'1'}})).json();
  assert(rv.body.startsWith('<!-- fresh-eyes -->')&&rv.html==='<p>'+rv.body.length+'</p>'&&rv.url==='https://github.com/o/r/pull/1');
- assert.deepEqual(await (await get('/api/review?repo=o/r&pr=2')).json(),{body:null,html:null,url:'https://github.com/o/r/pull/2'});
+ assert.deepEqual(await (await get('/api/review?repo=o/r&pr=2')).json(),{body:null,html:null,url:'https://github.com/o/r/pull/2'},'a plain read needs no header');
+ assert.equal((await get('/api/review?repo=constructor&pr=1')).status,400,'only own keys are repos');
+ assert.equal((await post('/api/label',null,{[HEADER]:'1'})).status,400,'a body that is not an object is 400');
  assert.equal((await get('/api/review?repo=o/r&pr=99')).status,400);
  assert.equal((await get('/api/review?repo=x/y&pr=1')).status,400);
  assert.equal((await post('/api/label',{repo:'o/r',pr:2,on:true})).status,403,'no header, no change');
  assert.equal((await fetch(base+'/api/label',{method:'OPTIONS'})).status,404,'no preflight, so no CORS');
  assert.equal((await post('/api/label',{repo:'o/r',pr:99,on:true},{[HEADER]:'1'})).status,400);
  assert.equal((await post('/api/label',{repo:'o/zz',pr:1,on:true},{[HEADER]:'1'})).status,400);
+ sstate.merges['o/r#2']={last:{head:'2'.repeat(40),ok:false,at:'2026-10-13T10:00:00Z',message:'checks pending'}};
  calls.length=0;
  assert.equal((await post('/api/label',{repo:'o/r',pr:2,on:true},{[HEADER]:'1'})).status,200);
+ assert.equal(sstate.merges['o/r#2'],undefined,'labelling again clears the failed attempt, so the head is tried again');
  assert.equal(calls[0],'pr edit 2 --repo o/r --add-label automerge');
  assert.deepEqual(lastOnly,['o/r'],'the label change refreshes through the same serialised tick');
  assert(calls.some(x=>x.startsWith('pr list --repo o/r')),'the repo is refreshed after a label change');
