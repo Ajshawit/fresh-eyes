@@ -46,8 +46,9 @@ seconds, minimum 15.
    reused for 24 hours; `--rediscover` forces a scan. An empty result is an error at startup that names the fix
    (`--repo`), not an empty page. Without `--discover`, no repository listing or workflow read happens at all.
 2. **Refresh** (every `--every` seconds and on `POST /api/refresh`): per repo,
-   - `gh pr list --repo R --state all --limit 40 --json number,title,url,author,createdAt,updatedAt,isDraft,state,
-     mergedAt,headRefOid,baseRefName,labels,mergeable,mergeStateStatus,statusCheckRollup`;
+   - `gh pr list --repo R --state open --limit 100` and `--state closed --limit 20`, both with `--json number,title,url,
+     author,createdAt,updatedAt,isDraft,state,mergedAt,headRefOid,baseRefName,labels,mergeable,mergeStateStatus,statusCheckRollup`
+     (two calls, so open PRs are never crowded out by closed ones);
    - `gh api "repos/R/issues/comments?sort=updated&direction=desc&per_page=100"` (first two pages at most), keeping
      comments by `FRESH_EYES_BOT` (default `github-actions[bot]`) whose body starts with the marker, keyed by issue
      number from `issue_url`.
@@ -62,7 +63,7 @@ seconds, minimum 15.
    shown under the row. A head is attempted once: a PR whose merge failed, or succeeded, is not retried until a push
    changes its head or the operator labels it again.
 4. **Review panel**: `GET /api/review?repo=R&pr=N` returns the cached comment body; the page posts it to
-   `gh api markdown -f mode=gfm -f context=R -f text=@-` through `GET /api/review?...&html=1` (which requires the
+   `gh api markdown --input -` with `{text, mode: "gfm", context: R}` on stdin, through `GET /api/review?...&html=1` (which requires the
    `x-fresh-eyes: 1` header) and renders the result in a panel beside the list, with the PR link. No comment: the panel says so.
 5. **Label**: `POST /api/label` with `{repo, pr, on}` runs `gh pr edit <n> --repo R --add-label|--remove-label <label>`
    then refreshes that repo. If the label does not exist in the repo, it is created once with
@@ -84,16 +85,16 @@ Pure. Returns the ordered chips the page draws:
 
 Pure. True only when every one of: state `OPEN`, not draft, label present, `mergeable === 'MERGEABLE'`,
 `mergeStateStatus` is `CLEAN` or `HAS_HOOKS` (so `BLOCKED`, `BEHIND`, `UNSTABLE`, `UNKNOWN` and the rest wait),
-`decide([comment], pr.headRefOid)` is null, and no `automerge.last` failure for this same head. Any missing field is
+`decide([comment], pr.headRefOid)` is null, and no `automerge.last` attempt (failed or successful) for this same head. Any missing field is
 false.
 
 ## Safety
 
 - Bound to `127.0.0.1`; `--port` only, never a host flag.
-- `POST` endpoints require the header `x-fresh-eyes: 1`. No CORS headers are sent and `OPTIONS` returns 404, so a
+- `POST` endpoints, and `GET /api/review` with `html=1`, require the header `x-fresh-eyes: 1`. No CORS headers are sent and `OPTIONS` returns 404, so a
   page on another origin cannot label or merge through a running dashboard. `GET` endpoints return JSON only.
 - Repo and PR in a request must match a given or discovered repo and a cached PR number; anything else is 400.
-  `gh` is always called with `execFileSync` and an argument array, never a shell string.
+  `gh` is always called with `execFile` (async, 120 s timeout) and an argument array, never a shell string.
 - Fails closed: an unreadable comment, a `gh` error, a head mismatch or a disagreeing verdict is never a merge. The
   merge pins the head it checked.
 - The dashboard trusts the posted bot comment, like the hook does and like `reuse: true`. The README states that the
