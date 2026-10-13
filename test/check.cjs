@@ -65,10 +65,11 @@ for(const s of [MARKER+'\n<!-- head: '+'a'.repeat(40)+' -->\nok','<!-- head: sho
 // path and never the file it points at, a file over the cap is cut, and anything past the budget is named.
 const t=fileText(['small.json','binary.bin','absent/x.js','link']);
 assert(t.text.includes('"hello"'),'a text file is inlined');
-assert(t.text.includes('not shown: absent/x.js (not in HEAD), binary.bin (binary)'),'skipped files are named with a reason');
+assert(t.text.includes('not shown: absent/x.js (unreadable), binary.bin (binary)'),'skipped files are named with a reason');
 assert(!t.text.includes('TOP SECRET'),'a symlink is not followed');
 assert(t.text.includes(secret),'a symlink shows as its target path');
-assert.deepEqual(t.partial,[],'nothing partial when everything fits');
+assert.deepEqual(t.partial,['absent/x.js could not be read'],'an unreadable text file makes the coverage partial; a binary does not');
+assert.deepEqual(fileText(['small.json','binary.bin']).partial,[],'nothing partial when everything fits');
 const cut=fileText(['big.txt']);
 assert(cut.text.includes('[truncated]')&&cut.text.length<=120_200,'a file over the cap is cut');
 assert.match(cut.partial[0],/big\.txt cut at/,'a cut file makes the coverage partial');

@@ -82,7 +82,8 @@ function fileText(files){
  for(const f of [...files].sort((a,b)=>size(a)-size(b))){
   if(left<=0){omitted.push(f);continue;}
   const text=show('HEAD',f);
-  if(text===null){skipped.push(f+' (not in HEAD)');continue;}
+  // A changed file git cannot hand back (a submodule, a blob past maxBuffer) was not reviewed: say so, do not approve.
+  if(text===null){skipped.push(f+' (unreadable)');partial.push(f+' could not be read');continue;}
   if(text.includes('\0')){skipped.push(f+' (binary)');continue;}
   let shown=text;
   if(text.length>left){shown=text.slice(0,left)+'\n[truncated]';partial.push(f+' cut at '+left+' characters');}
@@ -211,7 +212,9 @@ async function main(){
  if(!changed.length&&!deleted.length){review='No changes to review.\n\nVERDICT: APPROVE';verdict='APPROVE';}
  else{
   const partial=[];
-  let diff=files.length?sh('git',['diff',range,'--',...files]):'';
+  // Deleted files are in the pathspec too: their removal hunks are base-branch content the model must see.
+  const shown=[...files,...deleted.filter(f=>!cfg.ignore.some(re=>re.test(f)))];
+  let diff=shown.length?sh('git',['diff',range,'--',...shown]):'';
   if(diff.length>MAX_DIFF){diff=diff.slice(0,MAX_DIFF)+'\n[diff truncated]';partial.push('diff cut at '+MAX_DIFF+' characters');}
   const inlined=fileText(files);
   partial.push(...inlined.partial);
