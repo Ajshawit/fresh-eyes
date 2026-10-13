@@ -187,7 +187,7 @@ const noHead=parseComment(body.replace(/^<!-- head: .* -->\n/m,'').replace('REQU
 assert.equal(noHead.head,null);
 // Stages: one chip per column, from the PR as gh lists it and the comment for it.
 const s1=stages(prs[0],approve,'automerge');
-assert.deepEqual(s1,{opened:{author:'ann',at:'2026-10-01T10:00:00Z'},check:'pass',verdict:'APPROVE',critical:1,high:2,automerge:'merging',end:'open'});
+assert.deepEqual(s1,{opened:{author:'ann',at:'2026-10-01T10:00:00Z'},check:'pass',verdict:'APPROVE',critical:1,high:2,medium:1,low:0,automerge:'merging',end:'open'});
 assert.equal(stages(prs[0],c,'automerge').automerge,'waiting','request changes waits');
 assert.equal(stages(prs[0],null,'automerge').verdict,'none');
 assert.equal(stages(prs[0],noHead,'automerge').verdict,'stale','no head line is never the current head');
@@ -344,7 +344,7 @@ try{
  assert.equal((await get('/api/review?repo=o/r&pr=1&html=1')).status,403,'rendering needs the header');
  const rv=await (await fetch(base+'/api/review?repo=o/r&pr=1&html=1',{headers:{[HEADER]:'1'}})).json();
  assert(rv.body.startsWith('<!-- fresh-eyes -->')&&rv.html==='<p>'+rv.body.length+'</p>'&&rv.url==='https://github.com/o/r/pull/1');
- assert.deepEqual(await (await get('/api/review?repo=o/r&pr=2')).json(),{body:null,html:null,url:'https://github.com/o/r/pull/2'},'a plain read needs no header');
+ assert.deepEqual(await (await get('/api/review?repo=o/r&pr=2')).json(),{body:null,html:null,url:'https://github.com/o/r/pull/2',model:null},'a plain read needs no header');
  assert.equal((await get('/api/review?repo=constructor&pr=1')).status,400,'only own keys are repos');
  assert.equal((await post('/api/label',null,{[HEADER]:'1'})).status,400,'a body that is not an object is 400');
  assert.equal((await get('/api/review?repo=o/r&pr=99')).status,400);
