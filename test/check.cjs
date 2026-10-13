@@ -273,6 +273,13 @@ assert.deepEqual(state.repos['o/r'].rows[0].pr.automerge.last.message,'Pull requ
 assert.equal(state.repos['o/r'].rows[0].stages.automerge,'failed');
 calls.length=0;await automerge(state,opts);
 assert.deepEqual(calls,[],'a failed head is not retried');
+// A repo whose refresh failed keeps its old rows, and those stale rows are never merged.
+state.merges={};fail=()=>null;await refresh(state,opts); // rebuild the rows with no attempt recorded, so only the error stops a merge
+fail=args=>args[0]==='pr'&&args[1]==='list'&&args.includes('o/r')?'HTTP 502: Bad Gateway':null;
+await refresh(state,opts);calls.length=0;await automerge(state,opts);
+assert.equal(state.repos['o/r'].error,'HTTP 502: Bad Gateway');
+assert.deepEqual(calls.filter(x=>x.startsWith('pr merge')),[],'a repo that failed to refresh is not merged from stale rows');
+assert.equal(state.repos['o/r'].rows.length,3,'the previous rows are kept');
 fail=()=>null;
 // Labels: add, remove, and create the label once when the repo lacks it.
 calls.length=0;
@@ -301,5 +308,49 @@ assert.deepEqual(await discover({discover:true,rediscover:false}),['me/a'],'a da
 const noHits=io.gh;io.gh=async(args,input)=>args[0]==='repo'?'[]':noHits(args,input);
 await assert.rejects(()=>discover({discover:true,rediscover:true}),/--repo/);
 io.gh=noHits;
+// The server: the page and state are readable, the review renders through GitHub's markdown endpoint, and nothing
+// changes state without the custom header or for a repo or PR the dashboard does not know.
+const {serve,HEADER,PAGE}=dash;
+io.gh=realGh;fail=()=>null;
+const sstate={at:null,repos:{},merges:{}};
+const sopts={repos:['o/r'],label:'automerge',method:'squash',port:0,every:60};
+let ticks=0;
+const server=serve(sstate,sopts,async()=>{ticks++;await refresh(sstate,sopts);});
+await new Promise(r=>server.once('listening',r));
+const base='http://127.0.0.1:'+server.address().port;
+const get=(p)=>fetch(base+p);
+const post=(p,data,headers={})=>fetch(base+p,{method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify(data)});
+try{
+ const page=await (await get('/')).text();
+ assert(page.includes('<!doctype html>')&&page.includes('/api/state'));
+ assert(!/innerHTML\s*=\s*[^'"]*\b(title|login|author|name|message)\b/.test(PAGE),'PR text goes in as text, never HTML');
+ await post('/api/refresh',{},{[HEADER]:'1'});
+ assert.equal(ticks,1);
+ const st=await (await get('/api/state')).json();
+ assert.deepEqual(Object.keys(st),['at','label','method','every','repos']);
+ assert.equal(st.repos['o/r'].rows[0].pr.title,'Fix auth');
+ assert.equal(st.repos['o/r'].rows[0].stages.verdict,'APPROVE');
+ assert.deepEqual(st.repos['o/r'].rows[0].pr.labels,['automerge']);
+ assert.equal(st.repos['o/r'].rows[0].comment,undefined,'bodies are fetched per PR, not shipped with the state');
+ const rv=await (await get('/api/review?repo=o/r&pr=1&html=1')).json();
+ assert(rv.body.startsWith('<!-- fresh-eyes -->')&&rv.html==='<p>'+rv.body.length+'</p>'&&rv.url==='https://github.com/o/r/pull/1');
+ assert.deepEqual(await (await get('/api/review?repo=o/r&pr=2')).json(),{body:null,html:null,url:'https://github.com/o/r/pull/2'});
+ assert.equal((await get('/api/review?repo=o/r&pr=99')).status,400);
+ assert.equal((await get('/api/review?repo=x/y&pr=1')).status,400);
+ assert.equal((await post('/api/label',{repo:'o/r',pr:2,on:true})).status,403,'no header, no change');
+ assert.equal((await fetch(base+'/api/label',{method:'OPTIONS'})).status,404,'no preflight, so no CORS');
+ assert.equal((await post('/api/label',{repo:'o/r',pr:99,on:true},{[HEADER]:'1'})).status,400);
+ assert.equal((await post('/api/label',{repo:'o/zz',pr:1,on:true},{[HEADER]:'1'})).status,400);
+ calls.length=0;
+ assert.equal((await post('/api/label',{repo:'o/r',pr:2,on:true},{[HEADER]:'1'})).status,200);
+ assert.equal(calls[0],'pr edit 2 --repo o/r --add-label automerge');
+ assert(calls.some(x=>x.startsWith('pr list --repo o/r')),'the repo is refreshed after a label change');
+ fail=()=>'HTTP 403: Resource not accessible';
+ const err=await post('/api/label',{repo:'o/r',pr:2,on:false},{[HEADER]:'1'});
+ assert.equal(err.status,500);assert.equal((await err.json()).error,'HTTP 403: Resource not accessible');
+ fail=()=>null;
+ assert.equal((await get('/nope')).status,404);
+ assert.equal((await fetch(base+'/api/label',{method:'POST',headers:{[HEADER]:'1'},body:'{'})).status,400,'bad JSON is 400');
+}finally{server.closeAllConnections();server.close();} // keep-alive sockets would otherwise hold the process open
 console.log('fresh-eyes checks passed');
 }finally{fs.rmSync(REPO,{recursive:true,force:true});fs.rmSync(secret,{force:true});}})().catch(e=>{console.error(e);process.exit(1);});

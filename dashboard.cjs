@@ -8,6 +8,7 @@
 'use strict';
 const {execFile}=require('node:child_process');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
+const http=require('node:http');
 const {decide,headOf,verdictOf,MARKER}=require('./require-review.cjs');
 
 const REPO_RE=/^[\w.-]+\/[\w.-]+$/;
@@ -79,6 +80,7 @@ const PR_FIELDS='number,title,url,author,createdAt,updatedAt,isDraft,state,merge
 // All of GitHub, through gh: async so the page stays responsive while a refresh walks the repos. Tests replace it.
 const io={gh:(args,input)=>new Promise((resolve,reject)=>{
  const child=execFile('gh',args,{encoding:'utf8',maxBuffer:64<<20},(error,stdout,stderr)=>error?reject(Object.assign(error,{stderr})):resolve(stdout));
+ child.stdin.on('error',()=>{}); // a gh that exits before reading its input is reported by the callback, not an EPIPE crash
  child.stdin.end(input??'');
 })};
 const firstLine=e=>String(e?.stderr||e?.message||e).split('\n').map(s=>s.trim()).find(Boolean)||'unknown error';
@@ -120,16 +122,19 @@ async function refresh(state,opts,only){
 
 // Merges pinned to the head that was checked: gh refuses if a push landed in between. One attempt per head.
 async function automerge(state,opts){
- for(const [repo,r] of Object.entries(state.repos))for(const x of r.rows){
-  if(!shouldMerge(x.pr,x.comment,opts.label))continue;
-  const head=x.pr.headRefOid;
-  let last;
-  try{await io.gh(['pr','merge',String(x.pr.number),'--repo',repo,'--'+opts.method,'--match-head-commit',head]);last={head,ok:true,at:now(),message:'merged '+head.slice(0,7)};}
-  catch(e){last={head,ok:false,at:now(),message:firstLine(e)};}
-  state.merges[repo+'#'+x.pr.number]={last};
-  x.pr.automerge={last};
-  x.stages=stages(x.pr,x.comment,opts.label);
-  console.error((last.ok?'merged ':'merge failed ')+repo+'#'+x.pr.number+': '+last.message);
+ for(const [repo,r] of Object.entries(state.repos)){
+  if(r.error)continue; // rows kept from before a failed refresh are stale: never merge from them
+  for(const x of r.rows){
+   if(!shouldMerge(x.pr,x.comment,opts.label))continue;
+   const head=x.pr.headRefOid;
+   let last;
+   try{await io.gh(['pr','merge',String(x.pr.number),'--repo',repo,'--'+opts.method,'--match-head-commit',head]);last={head,ok:true,at:now(),message:'merged '+head.slice(0,7)};}
+   catch(e){last={head,ok:false,at:now(),message:firstLine(e)};}
+   state.merges[repo+'#'+x.pr.number]={last};
+   x.pr.automerge={last};
+   x.stages=stages(x.pr,x.comment,opts.label);
+   console.error((last.ok?'merged ':'merge failed ')+repo+'#'+x.pr.number+': '+last.message);
+  }
  }
 }
 
@@ -166,4 +171,159 @@ async function discover(opts){
  return repos;
 }
 
-module.exports={parseArgs,parseComment,stages,shouldMerge,io,firstLine,fetchRepo,refresh,automerge,setLabel,discover,PR_FIELDS};
+const HEADER='x-fresh-eyes'; // a custom header: a cross-origin page cannot send it without a preflight, which 404s
+const status=(code,message)=>Object.assign(Error(message),{status:code});
+
+// Only a repo this run covers and a PR it has listed can be acted on: anything else is a bad request, not a gh call.
+function find(state,repo,pr){
+ const r=state.repos[repo];
+ if(!r)throw status(400,'unknown repo');
+ const x=r.rows.find(y=>y.pr.number===pr);
+ if(!x)throw status(400,'unknown pr');
+ return x;
+}
+const guard=req=>{if(req.headers[HEADER]!=='1')throw status(403,'missing '+HEADER+' header');};
+
+// What the page gets: the fields it draws, labels as names, never a comment body (that is a click away).
+function publicState(state,opts){
+ const repos={};
+ for(const [repo,r] of Object.entries(state.repos))repos[repo]={error:r.error,rows:r.rows.map(({pr,stages})=>({
+  pr:{number:pr.number,title:pr.title,url:pr.url,headRefOid:pr.headRefOid,createdAt:pr.createdAt,updatedAt:pr.updatedAt,labels:(pr.labels||[]).map(l=>l.name),automerge:pr.automerge},stages}))};
+ return {at:state.at,label:opts.label,method:opts.method,every:opts.every,repos};
+}
+
+const readBody=req=>new Promise((resolve,reject)=>{let s='';req.on('data',d=>{s+=d;if(s.length>10_000){reject(status(413,'body too large'));req.destroy();}});req.on('end',()=>resolve(s));});
+
+async function handle(req,res,state,opts,tick){
+ const url=new URL(req.url,'http://127.0.0.1');
+ const json=(code,data)=>{res.writeHead(code,{'content-type':'application/json'});res.end(JSON.stringify(data));};
+ if(req.method==='GET'){
+  if(url.pathname==='/'){res.writeHead(200,{'content-type':'text/html; charset=utf-8'});return res.end(PAGE);}
+  if(url.pathname==='/api/state')return json(200,publicState(state,opts));
+  if(url.pathname==='/api/review'){
+   const repo=url.searchParams.get('repo'),x=find(state,repo,+url.searchParams.get('pr'));
+   const body=x.comment?.body||null;
+   const html=body&&url.searchParams.get('html')==='1'?await io.gh(['api','markdown','--input','-'],JSON.stringify({text:body,mode:'gfm',context:repo})):null;
+   return json(200,{body,html,url:x.pr.url});
+  }
+ }else if(req.method==='POST'){
+  guard(req);
+  let data;
+  try{data=JSON.parse(await readBody(req)||'{}');}catch{throw status(400,'body must be JSON');}
+  if(url.pathname==='/api/refresh'){await tick();return json(200,{ok:true});}
+  if(url.pathname==='/api/label'){
+   const x=find(state,data.repo,data.pr);
+   await setLabel(data.repo,x.pr.number,!!data.on,opts.label);
+   await refresh(state,opts,[data.repo]);
+   await automerge(state,opts);
+   return json(200,{ok:true});
+  }
+ }
+ throw status(404,'not found');
+}
+
+function serve(state,opts,tick){
+ const server=http.createServer((req,res)=>handle(req,res,state,opts,tick).catch(e=>{
+  res.writeHead(e.status||500,{'content-type':'application/json'});res.end(JSON.stringify({error:firstLine(e)}));
+ }));
+ server.listen(opts.port,'127.0.0.1');
+ return server;
+}
+
+// The page: one column of repos, a row per PR with five stage chips and the automerge toggle; a click opens the
+// review beside it. PR text is set with textContent; only GitHub's sanitised markdown render goes in as HTML.
+const PAGE=`<!doctype html>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fresh-eyes</title>
+<style>
+:root{--bg:#fff;--fg:#1f2328;--mute:#656d76;--line:#d0d7de;--ok:#1a7f37;--bad:#cf222e;--warn:#9a6700;--wait:#0969da;--chip:#f6f8fa}
+@media(prefers-color-scheme:dark){:root{--bg:#0d1117;--fg:#e6edf3;--mute:#8d96a0;--line:#30363d;--ok:#3fb950;--bad:#f85149;--warn:#d29922;--wait:#58a6ff;--chip:#161b22}}
+body{margin:0;font:14px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--fg);display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);height:100vh}
+header{grid-column:1/3;display:flex;gap:12px;align-items:center;padding:8px 16px;border-bottom:1px solid var(--line)}
+header .err{color:var(--bad)}
+main,aside{overflow:auto;padding:8px 16px}
+aside{border-left:1px solid var(--line)}
+h2{font-size:15px;margin:12px 0 4px}
+.row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center;padding:6px 8px;border:1px solid var(--line);border-radius:6px;margin:4px 0;cursor:pointer}
+.row:hover,.row.sel{background:var(--chip)}
+.title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.title a{color:inherit;text-decoration:none}
+.chips{display:flex;flex-wrap:wrap;gap:4px;font-size:12px;color:var(--mute)}
+.chip{padding:1px 6px;border:1px solid var(--line);border-radius:10px;background:var(--chip)}
+.pass,.APPROVE,.merged{color:var(--ok);border-color:var(--ok)}
+.fail,.REQUEST_CHANGES,.failed{color:var(--bad);border-color:var(--bad)}
+.pending,.waiting,.stale,.unparsed{color:var(--warn);border-color:var(--warn)}
+.merging{color:var(--wait);border-color:var(--wait)}
+.note{grid-column:1/3;font-size:12px;color:var(--mute)}
+button{font:inherit;padding:2px 8px;border:1px solid var(--line);border-radius:6px;background:var(--chip);color:var(--fg);cursor:pointer}
+button.on{border-color:var(--ok);color:var(--ok)}
+pre{white-space:pre-wrap}
+@media(max-width:900px){body{grid-template-columns:1fr;height:auto}header{grid-column:1}aside{border-left:0;border-top:1px solid var(--line)}}
+</style>
+<header><strong>fresh-eyes</strong><span id="at"></span><button id="refresh">Refresh</button><span id="errors" class="err"></span></header>
+<main id="main"></main>
+<aside id="aside"><p id="hint">Click a pull request to read its review.</p><p id="link"></p><div id="review"></div></aside>
+<script>
+const HEADER='${HEADER}';
+let state=null,selected=null;
+const el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;};
+const age=iso=>{const h=Math.round((Date.now()-new Date(iso))/36e5);return h<48?h+'h':Math.round(h/24)+'d';};
+async function load(){state=await (await fetch('/api/state')).json();draw();}
+async function post(path,data){
+ const r=await fetch(path,{method:'POST',headers:{'content-type':'application/json',[HEADER]:'1'},body:JSON.stringify(data||{})});
+ if(!r.ok)alert((await r.json()).error);
+ await load();
+}
+function draw(){
+ document.getElementById('at').textContent=state.at?'updated '+new Date(state.at).toLocaleTimeString()+', every '+state.every+'s':'loading…';
+ document.getElementById('errors').textContent=Object.entries(state.repos).filter(([,r])=>r.error).map(([k,r])=>k+': '+r.error).join(' · ');
+ const main=document.getElementById('main');main.replaceChildren();
+ for(const [repo,r] of Object.entries(state.repos)){
+  main.append(el('h2','',repo));
+  if(!r.rows.length)main.append(el('p','note','no pull requests'));
+  for(const {pr,stages:s} of r.rows){
+   const row=el('div','row'+(selected===repo+'#'+pr.number?' sel':''));
+   const title=el('div','title');const a=el('a','','#'+pr.number+' '+pr.title);a.href=pr.url;a.target='_blank';a.rel='noopener';title.append(a);
+   const chips=el('div','chips');
+   chips.append(el('span','chip',s.opened.author+' · '+age(s.opened.at)),el('span','chip '+s.check,'check: '+s.check),
+    el('span','chip '+s.verdict,'verdict: '+s.verdict+(s.critical||s.high?' ('+s.critical+' critical, '+s.high+' high)':'')),
+    el('span','chip '+s.automerge,'automerge: '+s.automerge),el('span','chip '+s.end,s.end));
+   const btn=el('button',s.automerge!=='off'?'on':'',s.automerge==='off'?'label '+state.label:'unlabel');
+   btn.onclick=e=>{e.stopPropagation();post('/api/label',{repo,pr:pr.number,on:s.automerge==='off'});};
+   row.append(title,btn,chips);
+   if(pr.automerge?.last)row.append(el('div','note',(pr.automerge.last.ok?'merged ':'merge failed ')+new Date(pr.automerge.last.at).toLocaleString()+': '+pr.automerge.last.message));
+   row.onclick=()=>show(repo,pr);
+   main.append(row);
+  }
+ }
+}
+async function show(repo,pr){
+ selected=repo+'#'+pr.number;draw();
+ const rv=await (await fetch('/api/review?repo='+encodeURIComponent(repo)+'&pr='+pr.number+'&html=1')).json();
+ const link=document.getElementById('link');link.replaceChildren();const a=el('a','',repo+'#'+pr.number);a.href=rv.url;a.target='_blank';a.rel='noopener';link.append(a);
+ document.getElementById('hint').textContent='';
+ const box=document.getElementById('review');box.replaceChildren();
+ if(rv.html)box.innerHTML=rv.html;else box.append(el('p','note',rv.body?'could not render':'no fresh-eyes review on this pull request'));
+}
+document.getElementById('refresh').onclick=()=>post('/api/refresh');
+load();setInterval(load,30_000);
+</script>
+`;
+
+async function main(){
+ const opts=parseArgs(process.argv.slice(2));
+ try{await io.gh(['auth','status']);}catch(e){throw Error('gh is not installed or not logged in ('+firstLine(e)+')');}
+ if(opts.discover)opts.repos=await discover(opts);
+ const state={at:null,repos:{},merges:{}};
+ for(const r of opts.repos)state.repos[r]={rows:[],error:null};
+ let busy=false; // a slow refresh must not overlap the next one, or a label click's refresh
+ const tick=async()=>{if(busy)return;busy=true;try{await refresh(state,opts);await automerge(state,opts);}finally{busy=false;}};
+ const server=serve(state,opts,tick);
+ server.on('listening',()=>console.error('fresh-eyes dashboard on http://127.0.0.1:'+server.address().port+' — '+opts.repos.length+' repo(s), refresh every '+opts.every+'s, label '+opts.label+', merge --'+opts.method));
+ await tick();
+ setInterval(tick,opts.every*1000);
+}
+
+if(require.main===module)main().catch(error=>{console.error(error?.message||error);process.exit(1);});
+
+module.exports={parseArgs,parseComment,stages,shouldMerge,io,firstLine,fetchRepo,refresh,automerge,setLabel,discover,PR_FIELDS,serve,handle,publicState,HEADER,PAGE};
