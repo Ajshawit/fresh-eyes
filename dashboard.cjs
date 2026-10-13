@@ -6,6 +6,8 @@
 // Usage: node dashboard.cjs --repo owner/name [--repo ...] [--port 7331] [--method squash|merge|rebase]
 //        [--label automerge] [--every 60]      or      node dashboard.cjs --discover [--rediscover] [...same flags]
 'use strict';
+const {execFile}=require('node:child_process');
+const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {decide,headOf,verdictOf,MARKER}=require('./require-review.cjs');
 
 const REPO_RE=/^[\w.-]+\/[\w.-]+$/;
@@ -69,4 +71,99 @@ function stages(pr,comment,label){
  return {opened:{author:pr.author?.login||'?',at:pr.createdAt},check:checkStage(pr),verdict,critical:comment?.critical||0,high:comment?.high||0,automerge,end};
 }
 
-module.exports={parseArgs,parseComment,stages,shouldMerge};
+const BOT=process.env.FRESH_EYES_BOT||'github-actions[bot]'; // who posts the review: the action's default token
+const CACHE=()=>process.env.FRESH_EYES_CACHE||path.join(os.homedir(),'.cache','fresh-eyes','repos.json');
+const DAY=86_400_000;
+const PR_FIELDS='number,title,url,author,createdAt,updatedAt,isDraft,state,mergedAt,headRefOid,baseRefName,labels,mergeable,mergeStateStatus,statusCheckRollup';
+
+// All of GitHub, through gh: async so the page stays responsive while a refresh walks the repos. Tests replace it.
+const io={gh:(args,input)=>new Promise((resolve,reject)=>{
+ const child=execFile('gh',args,{encoding:'utf8',maxBuffer:64<<20},(error,stdout,stderr)=>error?reject(Object.assign(error,{stderr})):resolve(stdout));
+ child.stdin.end(input??'');
+})};
+const firstLine=e=>String(e?.stderr||e?.message||e).split('\n').map(s=>s.trim()).find(Boolean)||'unknown error';
+const now=()=>new Date().toISOString();
+
+// One repo: open PRs and the 20 most recently closed, plus the bot's newest review comment per PR from the repo's
+// recent comments (two pages at most), so a repo costs three or four calls however many PRs it has.
+async function fetchRepo(repo){
+ const list=state=>io.gh(['pr','list','--repo',repo,'--state',state,'--limit',state==='open'?'100':'20','--json',PR_FIELDS]).then(JSON.parse);
+ const [open,closed]=await Promise.all([list('open'),list('closed')]);
+ const comments={};
+ for(const page of [1,2]){
+  const batch=JSON.parse(await io.gh(['api','repos/'+repo+'/issues/comments?sort=updated&direction=desc&per_page=100&page='+page]));
+  for(const c of batch){
+   const n=+String(c.issue_url).split('/').pop();
+   if(c.user?.login!==BOT||comments[n])continue; // newest first: the first hit per PR is the live comment
+   const parsed=parseComment(c.body);
+   if(parsed)comments[n]=parsed;
+  }
+  if(batch.length<100)break;
+ }
+ return {prs:[...open,...closed],comments};
+}
+
+const row=(state,repo,pr,comment,label)=>{pr.automerge=state.merges[repo+'#'+pr.number]||null;return {pr,comment,stages:stages(pr,comment,label)};};
+
+// A repo that cannot be read keeps its last rows and shows the error; it never gains an approval.
+async function refresh(state,opts,only){
+ for(const repo of only||opts.repos){
+  const r=state.repos[repo]||(state.repos[repo]={rows:[],error:null});
+  try{
+   const {prs,comments}=await fetchRepo(repo);
+   r.rows=prs.map(pr=>row(state,repo,pr,comments[pr.number]||null,opts.label));
+   r.error=null;
+  }catch(e){r.error=firstLine(e);}
+ }
+ state.at=now();
+}
+
+// Merges pinned to the head that was checked: gh refuses if a push landed in between. One attempt per head.
+async function automerge(state,opts){
+ for(const [repo,r] of Object.entries(state.repos))for(const x of r.rows){
+  if(!shouldMerge(x.pr,x.comment,opts.label))continue;
+  const head=x.pr.headRefOid;
+  let last;
+  try{await io.gh(['pr','merge',String(x.pr.number),'--repo',repo,'--'+opts.method,'--match-head-commit',head]);last={head,ok:true,at:now(),message:'merged '+head.slice(0,7)};}
+  catch(e){last={head,ok:false,at:now(),message:firstLine(e)};}
+  state.merges[repo+'#'+x.pr.number]={last};
+  x.pr.automerge={last};
+  x.stages=stages(x.pr,x.comment,opts.label);
+  console.error((last.ok?'merged ':'merge failed ')+repo+'#'+x.pr.number+': '+last.message);
+ }
+}
+
+// The label is created on first use in a repo that lacks it; every other gh error is the caller's to show.
+async function setLabel(repo,number,on,label){
+ const edit=()=>io.gh(['pr','edit',String(number),'--repo',repo,on?'--add-label':'--remove-label',label]);
+ try{await edit();}
+ catch(e){
+  if(!on||!/not found/i.test(firstLine(e)))throw e;
+  await io.gh(['label','create',label,'--repo',repo,'--color','0E8A16','--description','fresh-eyes dashboard: merge when the review approves']);
+  await edit();
+ }
+}
+
+// Opt-in: your non-archived repos whose workflow files mention fresh-eyes. Code search is not used because it lags
+// and misses private repos; this costs a call per repo plus one per workflow file, so the result is kept for a day.
+async function discover(opts){
+ if(!opts.rediscover){try{const c=JSON.parse(fs.readFileSync(CACHE(),'utf8'));if(Date.now()-c.at<DAY&&c.repos.length)return c.repos;}catch{}}
+ const me=(await io.gh(['api','user','--jq','.login'])).trim();
+ const all=JSON.parse(await io.gh(['repo','list',me,'--no-archived','--limit','200','--json','nameWithOwner'])).map(r=>r.nameWithOwner);
+ const repos=[];
+ for(const repo of all){
+  let files;
+  try{files=JSON.parse(await io.gh(['api','repos/'+repo+'/contents/.github/workflows']));}catch{continue;} // no workflows
+  for(const f of files){
+   if(!/\.ya?ml$/.test(f.name))continue;
+   const text=await io.gh(['api','-H','Accept: application/vnd.github.raw+json','repos/'+repo+'/contents/'+f.path]);
+   if(/fresh-eyes/.test(text)){repos.push(repo);break;}
+  }
+ }
+ fs.mkdirSync(path.dirname(CACHE()),{recursive:true});
+ fs.writeFileSync(CACHE(),JSON.stringify({at:Date.now(),repos}));
+ if(!repos.length)throw Error('no repository of '+me+' has a workflow mentioning fresh-eyes: name them with --repo owner/name');
+ return repos;
+}
+
+module.exports={parseArgs,parseComment,stages,shouldMerge,io,firstLine,fetchRepo,refresh,automerge,setLabel,discover,PR_FIELDS};

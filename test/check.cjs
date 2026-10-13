@@ -24,7 +24,7 @@ const hook=require('../require-review.cjs');
 const {parseConfig,focuses,verdictOf,headOf,baseOf,reusable,fileText,comment,sse,MARKER,MAX_COMMENT}=review;
 const {decide,target,inspect,check}=hook;
 
-try{
+(async()=>{try{
 // Config: absent is fine, patterns become regexes, bad shapes are refused with the file named.
 assert.deepEqual(parseConfig(null),{brief:null,focuses:[],ignore:[],diffOnly:[]});
 const cfg=parseConfig(fs.readFileSync(path.join(FIX,'.fresh-eyes.json'),'utf8'));
@@ -131,12 +131,13 @@ assert.match(decide([rev(sha,'REQUEST_CHANGES')],sha),/did not approve/);
 assert.match(decide([MARKER+'\nVERDICT: APPROVE'],sha),/older commit/,'a review with no head line does not count');
 // Which commands the hook inspects at all: null lets it through; a throw refuses it; a target is checked.
 const H=sha,M='--match-head-commit '+H;
-for(const m of ['gh pr view 5','gh pr list','gh pr view 5 --json mergeable,mergeStateStatus','gh pr list --search merge','gh api repos/o/r/pulls/5 --jq .mergeable,.merge_state_status',
+for(const m of ['gh pr view 5','gh pr list','gh pr view 5 --json mergeable,mergeStateStatus','gh pr list --search merge','gh api repos/o/r/pulls/5 --jq .mergeable,.merge_state_status','gh api graphql -f query={repository(owner:o,name:r){pullRequest(number:5){mergeable}}}',
  'gh pr list --search "merge me"','gh pr checks 83 --json name,merge','gh api repos/o/r/pulls/5','git merge main','echo merge','ls'])
  assert.equal(inspect(m),null,'let through: '+m);
 for(const m of ['gh pr -R o/r merge 5 '+M,'gh pr --squash merge 5 -R o/r '+M,'gh api -X PUT repos/o/r/pulls/5/merge','-Ogh pr merge 5 -R o/r '+M,
  'gh api \\\n repos/o/r/pulls/5/merge -X PUT','gh "pr" merge 5 -R o/r '+M,"gh 'pr' 'merge' 5",'gh pr view 5 --json mergeable; gh pr merge 5',
  'gh pr view 5 && echo merge','git commit -m "docs: gh pr merge"','gh pr edit 5 --body merge-ready',
+ 'gh api graphql -f query=mutation{mergePullRequest(input:{pullRequestId:x}){clientMutationId}}','gh api graphql -f query=mutation{enablePullRequestAutoMerge(input:{pullRequestId:x}){clientMutationId}}',
  "gh pr $'\\x6derge' 5",'gh pr view $PR','gh pr `pick` 5','gh api repos/o/r/pulls/$(cat n)/merge','eval "gh pr view 5"','gh pr vie\\x77 5'])
  assert.throws(()=>inspect(m),undefined,'refused: '+m);
 assert.equal(inspect('echo $HOME; git log'),null,'$ away from gh pr/api is nobody\'s business');
@@ -212,5 +213,92 @@ for(const [why,pr,cm] of [['no label',{...prs[0],labels:[]},approve],['draft',{.
  ['already tried this head',{...prs[0],automerge:failed},approve],['already merged this head',{...prs[0],automerge:{last:{...failed.last,ok:true}}},approve]])
  assert.equal(shouldMerge(pr,cm,'automerge'),false,'no merge: '+why);
 assert.equal(shouldMerge(prs[0],approve,'ship'),false,'a different label name does not count');
+// GitHub I/O against a fake gh: which commands run, what the loop does with their answers, and that a gh error
+// marks a repo unreadable instead of approving anything.
+const {io,fetchRepo,refresh,automerge,setLabel,discover,firstLine}=dash;
+const calls=[];
+let fail=()=>null; // args → error message to throw, or null
+io.gh=async(args,input)=>{
+ calls.push(args.join(' '));
+ const why=fail(args);if(why){throw Object.assign(Error('gh failed'),{stderr:why+'\n'});}
+ const a=args.join(' ');
+ if(a.startsWith('pr list'))return JSON.stringify(a.includes('--state open')?prs.filter(p=>p.state==='OPEN'):prs.filter(p=>p.state!=='OPEN'));
+ if(a.startsWith('api repos/o/r/issues/comments'))return JSON.stringify([
+  {issue_url:'https://api.github.com/repos/o/r/issues/1',user:{login:'github-actions[bot]'},body:body.replace('REQUEST_CHANGES','APPROVE')},
+  {issue_url:'https://api.github.com/repos/o/r/issues/1',user:{login:'github-actions[bot]'},body:'<!-- fresh-eyes -->\nolder, must not replace the newer one'},
+  {issue_url:'https://api.github.com/repos/o/r/issues/2',user:{login:'someone'},body:body},
+  {issue_url:'https://api.github.com/repos/o/r/issues/3',user:{login:'github-actions[bot]'},body:'not a review'}]);
+ if(a.startsWith('api user'))return 'me\n';
+ if(a.startsWith('repo list'))return JSON.stringify([{nameWithOwner:'me/a'},{nameWithOwner:'me/b'},{nameWithOwner:'me/c'}]);
+ // Workflow reads carry an Accept header before the path, so match on the path anywhere in the command.
+ if(a.includes('repos/me/a/contents/.github/workflows'))return a.endsWith('workflows')?JSON.stringify([{name:'ci.yml',path:'.github/workflows/ci.yml'},{name:'README',path:'.github/workflows/README'}]):'uses: ajshawit/fresh-eyes@v1\n';
+ if(a.includes('repos/me/b/contents/.github/workflows'))return a.endsWith('workflows')?JSON.stringify([{name:'x.yaml',path:'.github/workflows/x.yaml'}]):'name: nothing\n';
+ if(a.includes('repos/me/c/contents'))throw Object.assign(Error('gh failed'),{stderr:'HTTP 404: Not Found\n'});
+ if(a.startsWith('api markdown'))return '<p>'+JSON.parse(input).text.length+'</p>';
+ return '';
+};
+assert.equal(firstLine(Object.assign(Error('x'),{stderr:'\nboom\nmore'})),'boom');
+assert.equal(firstLine(Error('plain')),'plain');
+const got=await fetchRepo('o/r');
+assert.deepEqual(got.prs.map(p=>p.number),[1,2,3],'open first, then closed');
+assert.deepEqual(Object.keys(got.comments),['1'],'only the bot, only the marker, newest wins');
+assert.equal(got.comments[1].verdict,'APPROVE');
+assert(calls.some(x=>x==='pr list --repo o/r --state open --limit 100 --json '+dash.PR_FIELDS)&&calls.some(x=>x.startsWith('pr list --repo o/r --state closed --limit 20 ')));
+assert(calls.some(x=>x==='api repos/o/r/issues/comments?sort=updated&direction=desc&per_page=100&page=1'));
+const opts={repos:['o/r','o/down'],label:'automerge',method:'squash'};
+const state={at:null,repos:{},merges:{}};
+fail=args=>args.includes('o/down')?'HTTP 404: Not Found':null;
+await refresh(state,opts);
+assert.equal(state.repos['o/r'].error,null);
+assert.equal(state.repos['o/down'].error,'HTTP 404: Not Found');
+assert.deepEqual(state.repos['o/down'].rows,[]);
+assert.equal(state.repos['o/r'].rows[0].stages.automerge,'merging');
+assert(state.at);
+// The loop merges PR 1 once, pinned to its head, and never again for that head; a failure is kept and shown.
+calls.length=0;
+await automerge(state,opts);
+assert.deepEqual(calls,['pr merge 1 --repo o/r --squash --match-head-commit '+H1]);
+assert.equal(state.merges['o/r#1'].last.ok,true);
+assert.equal(state.repos['o/r'].rows[0].stages.automerge,'merged');
+calls.length=0;
+await automerge(state,opts);
+await refresh(state,opts);
+await automerge(state,opts);
+assert.deepEqual(calls.filter(x=>x.startsWith('pr merge')),[],'one merge per head, across refreshes');
+state.merges={};
+fail=args=>args[1]==='merge'?'Pull request is not mergeable':null;
+await refresh(state,opts);await automerge(state,opts);
+assert.deepEqual(state.repos['o/r'].rows[0].pr.automerge.last.message,'Pull request is not mergeable');
+assert.equal(state.repos['o/r'].rows[0].stages.automerge,'failed');
+calls.length=0;await automerge(state,opts);
+assert.deepEqual(calls,[],'a failed head is not retried');
+fail=()=>null;
+// Labels: add, remove, and create the label once when the repo lacks it.
+calls.length=0;
+await setLabel('o/r',2,true,'automerge');await setLabel('o/r',2,false,'automerge');
+assert.deepEqual(calls,['pr edit 2 --repo o/r --add-label automerge','pr edit 2 --repo o/r --remove-label automerge']);
+let created=false;
+fail=args=>args[1]==='edit'&&!created?"'automerge' not found":null;
+calls.length=0;
+const realGh=io.gh;io.gh=async(args,input)=>{if(args[0]==='label')created=true;return realGh(args,input);};
+await setLabel('o/r',2,true,'automerge');
+assert.deepEqual(calls.map(x=>x.split(' ').slice(0,3).join(' ')),['pr edit 2','label create automerge','pr edit 2']);
+io.gh=realGh;fail=()=>null;
+fail=()=>'HTTP 403';
+await assert.rejects(()=>setLabel('o/r',2,false,'automerge'),e=>firstLine(e)==='HTTP 403','a non-label error is passed on');
+fail=()=>null;
+// Discovery: workflow text decides, non-yaml and missing directories are skipped, the result is cached for a day.
+process.env.FRESH_EYES_CACHE=path.join(REPO,'cache','repos.json');
+assert.deepEqual(await discover({discover:true,rediscover:false}),['me/a']);
+calls.length=0;
+assert.deepEqual(await discover({discover:true,rediscover:false}),['me/a']);
+assert.deepEqual(calls,[],'served from the cache');
+await discover({discover:true,rediscover:true});
+assert(calls.some(x=>x.startsWith('repo list me --no-archived')),'rediscover scans again');
+fs.writeFileSync(process.env.FRESH_EYES_CACHE,JSON.stringify({at:Date.now()-2*86_400_000,repos:['stale/x']}));
+assert.deepEqual(await discover({discover:true,rediscover:false}),['me/a'],'a day-old cache is rescanned');
+const noHits=io.gh;io.gh=async(args,input)=>args[0]==='repo'?'[]':noHits(args,input);
+await assert.rejects(()=>discover({discover:true,rediscover:true}),/--repo/);
+io.gh=noHits;
 console.log('fresh-eyes checks passed');
-}finally{fs.rmSync(REPO,{recursive:true,force:true});fs.rmSync(secret,{force:true});}
+}finally{fs.rmSync(REPO,{recursive:true,force:true});fs.rmSync(secret,{force:true});}})().catch(e=>{console.error(e);process.exit(1);});
