@@ -170,6 +170,28 @@ merges. When the sha is missing or stale, the message gives the agent the exact 
 If the review is posted by something other than `github-actions[bot]` (a PAT, a GitHub App), set `FRESH_EYES_BOT`
 to that login for the hook, and the `bot` input for the action.
 
+## The dashboard
+
+`dashboard.cjs` is a local page showing every pull request's path through the gate across your repositories:
+opened, review check, verdict with CRITICAL/HIGH counts, automerge, merged. Click a row to read the review. A
+button adds or removes an `automerge` label; while the dashboard runs, a labelled PR that is open, not a draft and mergeable is merged as soon as the
+review comment approves its current head, with `--match-head-commit` so a push in between is refused. A head is
+attempted once: after a merge succeeds or fails, it is not retried until a push changes the head.
+
+```bash
+node dashboard.cjs --repo owner/name --repo owner/other     # http://127.0.0.1:7331
+node dashboard.cjs --discover                               # scan your repos' workflows for fresh-eyes (cached a day)
+```
+
+Flags: `--port 7331`, `--method squash|merge|rebase`, `--label automerge`, `--every 60` (refresh seconds, minimum
+15), `--rediscover`. It uses `gh` for every GitHub call, so run `gh auth login` first; it holds no token itself.
+
+The merge rule is the hook's: a comment by the bot login, for exactly the current head, with every verdict line
+`APPROVE`. Like `reuse: true` it trusts the posted comment, so only automerge repositories where no other
+workflow's token can post as that bot. The server binds to 127.0.0.1, refuses requests whose Host header is not
+`127.0.0.1:<port>` or `localhost:<port>` (so DNS rebinding cannot reach it), and refuses state changes without a
+custom header, so a web page you visit cannot label or merge through it.
+
 ## Running it by hand
 
 ```sh

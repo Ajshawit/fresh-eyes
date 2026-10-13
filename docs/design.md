@@ -14,6 +14,7 @@ judged. The whole thing stays two dependency-free Node files so it can be read i
 | `review.cjs` | Diff + files + brief to a chat endpoint; post one comment; exit 1 unless `VERDICT: APPROVE` | `action.yml`, manual runs | git, `fetch`, GitHub REST |
 | `require-review.cjs` | PreToolUse hook: allow `gh pr merge` only when the review comment approves the current head | Claude Code | `gh` |
 | `action.yml` | Composite action mapping inputs to the env `review.cjs` reads | consumer workflows | `review.cjs` |
+| `dashboard.cjs` | Local page of every PR's pipeline stages across repos; toggles an automerge label; merges labelled PRs once the hook's rule approves the head | operator | `gh`, `require-review.cjs` |
 | `.fresh-eyes.json` | Optional per-repo brief path and path-matched focuses, read from the base branch | `review.cjs` | — |
 | `test/check.cjs` | Pure unit checks with fixtures under `test/fixtures/` | CI | — |
 
@@ -51,6 +52,8 @@ judged. The whole thing stays two dependency-free Node files so it can be read i
 7. Exit 1 unless the verdict is APPROVE, after posting so the comment explains the red check.
 8. Later, the hook reads the bot's comments for the PR, matches marker and head, and lets `gh pr merge
    --match-head-commit <head>` through only on APPROVE. The MCP merge tool cannot pin a head and is always refused.
+9. Optionally, `dashboard.cjs` polls each repo's PRs and the bot's comments through `gh`, draws the stages, and
+   merges labelled PRs by the hook's `decide` rule, pinned to the reviewed head. Design: `docs/superpowers/specs/2026-10-13-dashboard-design.md`.
 
 ## Out of scope for 1.0
 
