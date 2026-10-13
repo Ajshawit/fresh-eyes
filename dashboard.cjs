@@ -171,7 +171,9 @@ async function discover(opts){
  return repos;
 }
 
-const HEADER='x-fresh-eyes'; // a custom header: a cross-origin page cannot send it without a preflight, which 404s
+// The custom header stops cross-origin pages (CSRF): they cannot send it without a preflight, which 404s. A DNS
+// rebinding page is same-origin and could send it, so every request must also name this server in its Host.
+const HEADER='x-fresh-eyes';
 const status=(code,message)=>Object.assign(Error(message),{status:code});
 
 // Only a repo this run covers and a PR it has listed can be acted on: anything else is a bad request, not a gh call.
@@ -195,6 +197,8 @@ function publicState(state,opts){
 const readBody=req=>new Promise((resolve,reject)=>{let s='';req.on('data',d=>{s+=d;if(s.length>10_000){reject(status(413,'body too large'));req.destroy();}});req.on('end',()=>resolve(s));});
 
 async function handle(req,res,state,opts,tick){
+ const port=req.socket.localPort;
+ if(![`127.0.0.1:${port}`,`localhost:${port}`].includes(req.headers.host))throw status(403,'unexpected Host header');
  const url=new URL(req.url,'http://127.0.0.1');
  const json=(code,data)=>{res.writeHead(code,{'content-type':'application/json'});res.end(JSON.stringify(data));};
  if(req.method==='GET'){
@@ -214,8 +218,7 @@ async function handle(req,res,state,opts,tick){
   if(url.pathname==='/api/label'){
    const x=find(state,data.repo,data.pr);
    await setLabel(data.repo,x.pr.number,!!data.on,opts.label);
-   await refresh(state,opts,[data.repo]);
-   await automerge(state,opts);
+   await tick([data.repo]);
    return json(200,{ok:true});
   }
  }
@@ -316,12 +319,13 @@ async function main(){
  if(opts.discover)opts.repos=await discover(opts);
  const state={at:null,repos:{},merges:{}};
  for(const r of opts.repos)state.repos[r]={rows:[],error:null};
- let busy=false; // a slow refresh must not overlap the next one, or a label click's refresh
- const tick=async()=>{if(busy)return;busy=true;try{await refresh(state,opts);await automerge(state,opts);}finally{busy=false;}};
+ // One queue for timer ticks, the refresh button and label clicks: no two refreshes or merge passes ever overlap.
+ let chain=Promise.resolve();
+ const tick=only=>{const run=chain.then(()=>refresh(state,opts,only)).then(()=>automerge(state,opts));chain=run.catch(()=>{});return run;};
  const server=serve(state,opts,tick);
  server.on('listening',()=>console.error('fresh-eyes dashboard on http://127.0.0.1:'+server.address().port+' — '+opts.repos.length+' repo(s), refresh every '+opts.every+'s, label '+opts.label+', merge --'+opts.method));
  await tick();
- setInterval(tick,opts.every*1000);
+ setInterval(()=>tick().catch(e=>console.error('refresh failed: '+firstLine(e))),opts.every*1000);
 }
 
 if(require.main===module)main().catch(error=>{console.error(error?.message||error);process.exit(1);});

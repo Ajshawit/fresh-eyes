@@ -314,8 +314,8 @@ const {serve,HEADER,PAGE}=dash;
 io.gh=realGh;fail=()=>null;
 const sstate={at:null,repos:{},merges:{}};
 const sopts={repos:['o/r'],label:'automerge',method:'squash',port:0,every:60};
-let ticks=0;
-const server=serve(sstate,sopts,async()=>{ticks++;await refresh(sstate,sopts);});
+let ticks=0,lastOnly;
+const server=serve(sstate,sopts,async only=>{ticks++;lastOnly=only;await refresh(sstate,sopts,only);});
 await new Promise(r=>server.once('listening',r));
 const base='http://127.0.0.1:'+server.address().port;
 const get=(p)=>fetch(base+p);
@@ -326,6 +326,12 @@ try{
  assert(!/innerHTML\s*=\s*[^'"]*\b(title|login|author|name|message)\b/.test(PAGE),'PR text goes in as text, never HTML');
  await post('/api/refresh',{},{[HEADER]:'1'});
  assert.equal(ticks,1);
+ // DNS rebinding: a page on another name that resolves to 127.0.0.1 is same-origin to itself, so the Host decides.
+ const raw=(method,p,headers)=>new Promise((resolve,reject)=>require('node:http').request(base+p,{method,headers},r=>{r.resume();resolve(r.statusCode);}).on('error',reject).end());
+ assert.equal(await raw('GET','/api/state',{host:'evil.example'}),403,'a foreign Host is refused');
+ assert.equal(await raw('POST','/api/refresh',{host:'evil.example:'+server.address().port,[HEADER]:'1'}),403);
+ assert.equal(ticks,1,'a refused request runs nothing');
+ assert.equal(await raw('GET','/api/state',{host:'localhost:'+server.address().port}),200);
  const st=await (await get('/api/state')).json();
  assert.deepEqual(Object.keys(st),['at','label','method','every','repos']);
  assert.equal(st.repos['o/r'].rows[0].pr.title,'Fix auth');
@@ -344,6 +350,7 @@ try{
  calls.length=0;
  assert.equal((await post('/api/label',{repo:'o/r',pr:2,on:true},{[HEADER]:'1'})).status,200);
  assert.equal(calls[0],'pr edit 2 --repo o/r --add-label automerge');
+ assert.deepEqual(lastOnly,['o/r'],'the label change refreshes through the same serialised tick');
  assert(calls.some(x=>x.startsWith('pr list --repo o/r')),'the repo is refreshed after a label change');
  fail=()=>'HTTP 403: Resource not accessible';
  const err=await post('/api/label',{repo:'o/r',pr:2,on:false},{[HEADER]:'1'});
