@@ -184,6 +184,7 @@ async function postComment(repo,pr,body){
 // The comment: marker, reviewed head, the review, footer. A review too long for GitHub is cut, but the cut part is
 // stripped of verdict lines first and the verdict re-stated last, so the comment never says more than the run did.
 function comment(review,verdict,head){
+ review=review.replace(/^<!-- head: .* -->[ \t]*$/gm,''); // only the header may say which head was reviewed
  const header=MARKER+'\n'+(/^[0-9a-f]{40}$/.test(head)?'<!-- head: '+head+' -->\n':'')+'### Fresh-eyes review — `'+MODEL+'`\n\n';
  const footer='\n\n<sub>Gates merging: anything but `VERDICT: APPROVE` fails this check.</sub>\n';
  const budget=MAX_COMMENT-header.length-footer.length;
@@ -194,7 +195,8 @@ function comment(review,verdict,head){
  return header+review+footer;
 }
 
-const names=(range,filter)=>sh('git',['diff','-z','--name-only',filter,range]).split('\0').filter(Boolean);
+// --no-renames: a rename is a deletion plus an addition, so the old path's removal is shown and the new file in full.
+const names=(range,filter)=>sh('git',['diff','-z','--no-renames','--name-only',filter,range]).split('\0').filter(Boolean);
 
 async function main(){
  const positional=process.argv.slice(2).filter(a=>!a.startsWith('--')); // --dry must not become the output name
@@ -214,7 +216,7 @@ async function main(){
   const partial=[];
   // Deleted files are in the pathspec too: their removal hunks are base-branch content the model must see.
   const shown=[...files,...deleted.filter(f=>!cfg.ignore.some(re=>re.test(f)))];
-  let diff=shown.length?sh('git',['diff',range,'--',...shown]):'';
+  let diff=shown.length?sh('git',['diff','--no-renames',range,'--',...shown]):'';
   if(diff.length>MAX_DIFF){diff=diff.slice(0,MAX_DIFF)+'\n[diff truncated]';partial.push('diff cut at '+MAX_DIFF+' characters');}
   const inlined=fileText(files);
   partial.push(...inlined.partial);
