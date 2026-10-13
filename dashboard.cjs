@@ -275,12 +275,12 @@ button.on{border-color:var(--ok);color:var(--ok)}
 pre{white-space:pre-wrap}
 @media(max-width:900px){body{grid-template-columns:1fr;height:auto}header{grid-column:1}aside{border-left:0;border-top:1px solid var(--line)}}
 </style>
-<header><strong>fresh-eyes</strong><span id="at"></span><button id="refresh">Refresh</button><span id="errors" class="err"></span></header>
+<header><strong>fresh-eyes</strong><span id="at"></span><button id="refresh">Refresh</button><label><input type="checkbox" id="merged"> show merged</label><span id="errors" class="err"></span></header>
 <main id="main"></main>
 <aside id="aside"><p id="hint">Click a pull request to read its review.</p><p id="link"></p><div id="review"></div></aside>
 <script>
 const HEADER='${HEADER}';
-let state=null,selected=null;
+let state=null,selected=null,showMerged=false;
 const el=(tag,cls,text)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(text!==undefined)e.textContent=text;return e;};
 const age=iso=>{const h=Math.round((Date.now()-new Date(iso))/36e5);return h<48?h+'h':Math.round(h/24)+'d';};
 async function load(){state=await (await fetch('/api/state')).json();draw();}
@@ -295,8 +295,9 @@ function draw(){
  const main=document.getElementById('main');main.replaceChildren();
  for(const [repo,r] of Object.entries(state.repos)){
   main.append(el('h2','',repo));
-  if(!r.rows.length)main.append(el('p','note','no pull requests'));
-  for(const {pr,stages:s} of r.rows){
+  const rows=r.rows.filter(x=>showMerged||x.stages.end!=='merged'); // merged PRs are history; hidden unless asked
+  if(!rows.length)main.append(el('p','note',r.rows.length?r.rows.length+' merged, hidden':'no pull requests'));
+  for(const {pr,stages:s} of rows){
    const row=el('div','row'+(selected===repo+'#'+pr.number?' sel':''));
    const title=el('div','title');const a=el('a','','#'+pr.number+' '+pr.title);a.href=pr.url;a.target='_blank';a.rel='noopener';title.append(a);
    const chips=el('div','chips');
@@ -321,6 +322,7 @@ async function show(repo,pr){
  if(rv.html)box.innerHTML=rv.html;else box.append(el('p','note',rv.body?'could not render':'no fresh-eyes review on this pull request'));
 }
 document.getElementById('refresh').onclick=()=>post('/api/refresh');
+document.getElementById('merged').onchange=e=>{showMerged=e.target.checked;draw();};
 load();setInterval(load,30_000);
 </script>
 `;
