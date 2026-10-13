@@ -22,7 +22,7 @@ process.env.REPO_ROOT=REPO;
 const review=require('../review.cjs');
 const hook=require('../require-review.cjs');
 const {parseConfig,focuses,verdictOf,headOf,baseOf,reusable,fileText,comment,sse,MARKER,MAX_COMMENT}=review;
-const {decide,target,inspect}=hook;
+const {decide,target,inspect,check}=hook;
 
 try{
 // Config: absent is fine, patterns become regexes, bad shapes are refused with the file named.
@@ -141,6 +141,11 @@ for(const m of ['gh pr -R o/r merge 5 '+M,'gh pr --squash merge 5 -R o/r '+M,'gh
 assert.equal(inspect('echo $HOME; git log'),null,'$ away from gh pr/api is nobody\'s business');
 assert.deepEqual(inspect('gh pr merge 5 -R o/r '+M),{repo:'o/r',pr:'5',head:H},'the plain form is checked');
 assert.deepEqual(inspect('gh pr \\\n merge 5 -R o/r '+M),{repo:'o/r',pr:'5',head:H},'a line continuation is joined, then checked');
+assert.deepEqual(inspect('gh pr me\\\nrge 5 -R o/r '+M),{repo:'o/r',pr:'5',head:H},'a continuation inside the word is deleted, as bash does');
+assert.throws(()=>inspect('gh api repos/o/r/pulls/5/me\\\nrge -X PUT'),undefined,'a split api merge is still a merge');
+// The entry point's Bash wiring: a clean command returns null before gh is called; a mention throws before gh is called.
+assert.equal(check({tool_name:'Bash',tool_input:{command:'ls'}}),null);
+assert.throws(()=>check({tool_name:'Bash',tool_input:{command:'echo gh pr merge 5'}}),undefined,'a mention is refused before any gh call');
 assert.deepEqual(target('gh pr merge 71 --squash -R o/r '+M),{repo:'o/r',pr:'71',head:H});
 assert.deepEqual(target('gh pr merge --repo o/r --squash 9 '+M+' && echo done'),{repo:'o/r',pr:'9',head:H});
 assert.deepEqual(target('gh pr merge https://github.com/o/r/pull/3 -d '+M),{repo:undefined,pr:'https://github.com/o/r/pull/3',head:H});

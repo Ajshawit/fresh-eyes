@@ -3,7 +3,7 @@
 // unless the fresh-eyes review comment approves the PR's current head commit. Exit 2 blocks the call and shows
 // stderr to the agent. Fails closed: if the PR or its comments cannot be read, the merge is blocked.
 // Self-contained on purpose: copy this one file into a repo. The marker, head line and verdict line below must match
-// what review.cjs writes (test/check.cjs asserts they do).
+// what fresh-eyes' review.cjs writes; its test/check.cjs asserts the two copies agree.
 // Known limit: this guards the two merge paths a Claude Code agent normally takes. A merge from the GitHub web UI, a
 // direct push to the base branch, or a merge through curl or another tool is not seen; branch protection covers those.
 'use strict';
@@ -22,7 +22,7 @@ const verdictOf=review=>{const all=[...review.matchAll(VERDICT)].map(m=>m[1]);re
 // in text gates the call too, since text can be written somewhere that runs.
 const MENTION=/gh\b[\s\S]*\bpr\b[\s\S]*merge|gh\b[\s\S]*\bapi\b[\s\S]*merge/;
 const READ_ONLY=/^\s*gh\s+pr\s+(view|list|checks|diff|status)\b[^;&|`$()<>\n]*$/;
-const joined=command=>command.replace(/\\\r?\n/g,' ');
+const joined=command=>command.replace(/\\\r?\n/g,''); // deleted outright, as bash does: me\<newline>rge is merge
 // A gh pr/api command whose words the shell builds at run time ($var, $(…), `…`, eval, $'\x6d' escapes) could spell
 // merge without writing it, so it is refused outright: the hook only passes what it can read.
 const BUILT=/\$|`|\beval\b|\\(?:x[0-9a-f]{2}|u[0-9a-f]{4}|[0-7]{3})/i;
@@ -108,4 +108,4 @@ if(require.main===module){
  catch(error){why='Merge blocked: could not confirm a fresh-eyes review approval ('+(error?.message||error).split('\n')[0]+').';}
  if(why){console.error(why);process.exit(2);}
 }
-module.exports={decide,target,inspect,verdictOf,headOf,MARKER};
+module.exports={decide,target,inspect,check,verdictOf,headOf,MARKER};
