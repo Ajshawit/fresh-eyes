@@ -28,20 +28,23 @@ as an approval, and the test already asserts it agrees with `review.cjs`.
 ## Usage
 
 ```
-node dashboard.cjs [--repo owner/name ...] [--port 7331] [--method squash|merge|rebase] [--label automerge] [--every 60] [--rediscover]
+node dashboard.cjs --repo owner/name [--repo ...] [--port 7331] [--method squash|merge|rebase] [--label automerge] [--every 60]
+node dashboard.cjs --discover [--rediscover] [...same flags]
 ```
 
-Prints the URL and opens nothing. `--repo` given at least once skips discovery and covers exactly those repos.
+Prints the URL and opens nothing. Repos come from `--repo`, given at least once, which is the default way to run it.
+`--discover` instead scans your repositories' workflow files for ones that use the action; it is opt-in because it
+costs one or more API calls per repository and GitHub code search cannot be relied on. Giving both is an error.
 `--method` defaults to `squash`. `--label` defaults to `automerge`. `--every` is the refresh and automerge interval in
 seconds, minimum 15.
 
 ## Data flow
 
-1. **Discovery** (no `--repo`): `gh repo list <me> --no-archived --json nameWithOwner`, then for each repo
+1. **Discovery** (`--discover` only): `gh repo list <me> --no-archived --json nameWithOwner`, then for each repo
    `gh api repos/R/contents/.github/workflows` and the text of every `.yml`/`.yaml` there. A repo is kept when any
    workflow mentions `fresh-eyes`. The result is written to `~/.cache/fresh-eyes/repos.json` with a timestamp and
    reused for 24 hours; `--rediscover` forces a scan. An empty result is an error at startup that names the fix
-   (`--repo`), not an empty page.
+   (`--repo`), not an empty page. Without `--discover`, no repository listing or workflow read happens at all.
 2. **Refresh** (every `--every` seconds and on `POST /api/refresh`): per repo,
    - `gh pr list --repo R --state all --limit 40 --json number,title,url,author,createdAt,updatedAt,isDraft,state,
      mergedAt,headRefOid,baseRefName,labels,mergeable,mergeStateStatus,statusCheckRollup`;
@@ -86,7 +89,7 @@ false.
 - Bound to `127.0.0.1`; `--port` only, never a host flag.
 - `POST` endpoints require the header `x-fresh-eyes: 1`. No CORS headers are sent and `OPTIONS` returns 404, so a
   page on another origin cannot label or merge through a running dashboard. `GET` endpoints return JSON only.
-- Repo and PR in a request must match a discovered or given repo and a cached PR number; anything else is 400.
+- Repo and PR in a request must match a given or discovered repo and a cached PR number; anything else is 400.
   `gh` is always called with `execFileSync` and an argument array, never a shell string.
 - Fails closed: an unreadable comment, a `gh` error, a head mismatch or a disagreeing verdict is never a merge. The
   merge pins the head it checked.
@@ -102,7 +105,7 @@ step, no external assets.
 
 ## Error handling
 
-Startup errors (no `gh`, not logged in, no repos found) exit 1 with the fix in the message. Loop errors are caught
+Startup errors (no `gh`, not logged in, neither `--repo` nor `--discover`, both given, no repos found) exit 1 with the fix in the message. Loop errors are caught
 per repo and surfaced in the state, never crashing the server. Label and merge errors return the `gh` stderr first
 line as the response and are shown inline.
 
