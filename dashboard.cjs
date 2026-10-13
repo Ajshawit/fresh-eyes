@@ -320,12 +320,13 @@ async function main(){
  const state={at:null,repos:{},merges:{}};
  for(const r of opts.repos)state.repos[r]={rows:[],error:null};
  // One queue for timer ticks, the refresh button and label clicks: no two refreshes or merge passes ever overlap.
- let chain=Promise.resolve();
- const tick=only=>{const run=chain.then(()=>refresh(state,opts,only)).then(()=>automerge(state,opts));chain=run.catch(()=>{});return run;};
+ // The timer skips while anything is queued or running, so a slow refresh never builds a backlog.
+ let chain=Promise.resolve(),pending=0;
+ const tick=only=>{pending++;const run=chain.then(()=>refresh(state,opts,only)).then(()=>automerge(state,opts)).finally(()=>pending--);chain=run.catch(()=>{});return run;};
  const server=serve(state,opts,tick);
  server.on('listening',()=>console.error('fresh-eyes dashboard on http://127.0.0.1:'+server.address().port+' — '+opts.repos.length+' repo(s), refresh every '+opts.every+'s, label '+opts.label+', merge --'+opts.method));
  await tick();
- setInterval(()=>tick().catch(e=>console.error('refresh failed: '+firstLine(e))),opts.every*1000);
+ setInterval(()=>{if(!pending)tick().catch(e=>console.error('refresh failed: '+firstLine(e)));},opts.every*1000);
 }
 
 if(require.main===module)main().catch(error=>{console.error(error?.message||error);process.exit(1);});
