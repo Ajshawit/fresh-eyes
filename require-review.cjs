@@ -4,14 +4,19 @@
 // stderr to the agent. Fails closed: if the PR or its comments cannot be read, the merge is blocked.
 // Self-contained on purpose: copy this one file into a repo. The marker, head line and verdict line below must match
 // what review.cjs writes (test/check.cjs asserts they do).
-// ponytail: GitHub itself cannot require a check on a private Free-plan repo; a merge from the web UI still bypasses it.
+// Known limit: this guards the two merge paths a Claude Code agent normally takes. A merge from the GitHub web UI, a
+// direct push to the base branch, or a merge through curl or another tool is not seen; branch protection covers those.
 'use strict';
 const {execFileSync}=require('node:child_process');
 
 const MARKER='<!-- fresh-eyes -->';
 const BOT=process.env.FRESH_EYES_BOT||'github-actions[bot]'; // who posts the review: the action's default token
 const headOf=body=>body.match(/^<!-- head: ([0-9a-f]{40}) -->$/m)?.[1]||null;
-const verdictOf=review=>review.match(/^[`*]*VERDICT:[ \t]*(APPROVE|REQUEST_CHANGES)[`*]*[ \t]*$/m)?.[1]||null;
+const VERDICT=/^[`*]*VERDICT:[ \t]*(APPROVE|REQUEST_CHANGES)[`*]*[ \t]*$/gm;
+// Every verdict line must agree: a quoted injected APPROVE next to a real REQUEST_CHANGES is no approval.
+const verdictOf=review=>{const all=[...review.matchAll(VERDICT)].map(m=>m[1]);return all.length&&all.every(v=>v===all[0])?all[0]:null;};
+// Commands this hook inspects: `gh pr … merge` in any flag order, and `gh api` on a pull request's merge endpoint.
+const MERGE=/\bgh\s+pr\b[^;&|\n]*\bmerge\b|\bgh\s+api\b[^;&|\n]*\/merge\b/;
 
 // Why the merge must wait, or null when the bot's review approves this head.
 function decide(bodies,head){
@@ -32,6 +37,7 @@ const PR=/^(\d+|https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+)$/;
 // PR, repo and head commit from a `gh pr merge` command, or a throw. All three are required: nothing is taken from
 // the shell's cwd (a `cd` would point gh at another repo) or from time (--match-head-commit pins what was reviewed).
 function target(command){
+ if(!/\bgh\s+pr\s+merge\b/.test(command))throw Error('merge with `gh pr merge <pr> --repo owner/name --match-head-commit <sha>`, not gh api or flags before merge');
  if(/\bGH_\w*=|\bgh\s+pr\s+merge\b[\s\S]*\bgh\s+pr\s+merge\b/.test(command))throw Error('use one plain `gh pr merge`, with no GH_* overrides');
  const [before,rest]=command.split(/\bgh\s+pr\s+merge\b/);
  // Nothing may run before it: a `cd`, an alias or a function defined earlier could change what gh merges.
@@ -65,7 +71,7 @@ const gh=args=>execFileSync('gh',args,{encoding:'utf8',maxBuffer:64<<20});
 function check(input){
  let repo,pr,head;
  if(input.tool_name==='Bash'){
-  if(!/\bgh\s+pr\s+merge\b/.test(input.tool_input?.command||''))return null;
+  if(!MERGE.test(input.tool_input?.command||''))return null;
   ({repo,pr,head}=target(input.tool_input.command));
  }else{
   repo=input.tool_input.owner+'/'+input.tool_input.repo;pr=String(input.tool_input.pullNumber);
@@ -85,4 +91,4 @@ if(require.main===module){
  catch(error){why='Merge blocked: could not confirm a fresh-eyes review approval ('+(error?.message||error).split('\n')[0]+').';}
  if(why){console.error(why);process.exit(2);}
 }
-module.exports={decide,target,verdictOf,headOf,MARKER};
+module.exports={decide,target,verdictOf,headOf,MARKER,MERGE};

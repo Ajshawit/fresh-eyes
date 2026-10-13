@@ -23,11 +23,15 @@ inputs:
   github-token:
     description: Token used to post the comment. Needs pull-requests write.
     default: ${{ github.token }}
+  bot:
+    description: Login the token posts as, so the comment can be found and updated. Change it for a PAT or GitHub App token.
+    default: github-actions[bot]
 runs:
   using: composite
   steps:
     - shell: bash
-      # The reviewer runs from this pinned action, never from the PR, so a PR cannot edit it into approving itself.
+      # The reviewer runs from this pinned action, never from the PR, and executes nothing from the checkout.
+      # Any FRESH_EYES_* variable set as env on the calling step (for example FRESH_EYES_MAX_DIFF) is seen here too.
       run: node "$GITHUB_ACTION_PATH/review.cjs" "$OUT"
       env:
         REPO_ROOT: ${{ github.workspace }}
@@ -40,4 +44,5 @@ runs:
         FRESH_EYES_URL: ${{ inputs.url }}
         FRESH_EYES_API_KEY: ${{ inputs.api-key }}
         FRESH_EYES_CONFIG: ${{ inputs.config }}
+        FRESH_EYES_BOT: ${{ inputs.bot }}
         OUT: ${{ inputs.out }}
