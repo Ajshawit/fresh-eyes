@@ -217,7 +217,8 @@ async function main(){
  const base=process.env.BASE_REF,out=positional[0]||'output/review.md',dry=process.argv.includes('--dry');
  if(!base||!/^[\w./-]+$/.test(base))throw Error('BASE_REF must name the base branch (the action sets it from pull_request_target or pull_request events)');
  const {PR,REPO,GH_TOKEN,HEAD_SHA}=process.env;
- if(!dry&&PR&&REPO&&GH_TOKEN){
+ // Opt-in: reuse trusts the posted comment, so any other workflow that can post as the bot could skip the model.
+ if(process.env.FRESH_EYES_REUSE==='true'&&!dry&&PR&&REPO&&GH_TOKEN){
   const verdict=reusable((await findComment(REPO,PR))?.body,HEAD_SHA||'',base);
   if(verdict){
    console.error('reusing the review of '+HEAD_SHA.slice(0,7)+' against '+base+': '+verdict);

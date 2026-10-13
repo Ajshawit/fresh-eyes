@@ -23,6 +23,9 @@ inputs:
   github-token:
     description: Token used to post the comment. Needs pull-requests write.
     default: ${{ github.token }}
+  reuse:
+    description: Reuse the posted verdict for an unchanged head and base instead of asking the model again. Trusts the comment, so keep other workflows' tokens read-only.
+    default: 'false'
   bot:
     description: Login the token posts as, so the comment can be found and updated. Change it for a PAT or GitHub App token.
     default: github-actions[bot]
@@ -45,4 +48,5 @@ runs:
         FRESH_EYES_API_KEY: ${{ inputs.api-key }}
         FRESH_EYES_CONFIG: ${{ inputs.config }}
         FRESH_EYES_BOT: ${{ inputs.bot }}
+        FRESH_EYES_REUSE: ${{ inputs.reuse }}
         OUT: ${{ inputs.out }}

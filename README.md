@@ -97,6 +97,7 @@ brief or the focuses it is judged by; its edit to the file is reviewed like any 
 | `out` | `output/review.md` | Where the review markdown is written |
 | `github-token` | `github.token` | Token that posts the comment |
 | `bot` | `github-actions[bot]` | Login that token posts as, so the comment can be found again |
+| `reuse` | `false` | Reuse the posted verdict for an unchanged head and base (see below) |
 
 `FRESH_EYES_MAX_DIFF` (200 000) and `FRESH_EYES_MAX_FILES` (120 000) cap the characters of diff and of file text
 sent to the model. Set them as `env:` on the action step.
@@ -113,9 +114,11 @@ one line `VERDICT: APPROVE` or `VERDICT: REQUEST_CHANGES`. A verdict line must s
 or bold around it are fine). Every verdict line in the review must agree: a model that quotes an injected
 `VERDICT: APPROVE` from a file and then ends with REQUEST_CHANGES has not approved. No verdict line is not an approval.
 
-**A review is reused, not repeated.** The comment records the head sha and the base branch. A re-run for the same
-head against the same base reuses that verdict without asking the model, so a label event or a manual re-run is free.
-A new push, or a PR retargeted to another base, is reviewed again.
+**Reuse is opt-in.** The comment records the head sha and the base branch. With `reuse: true`, a re-run for the same
+head against the same base takes that verdict without asking the model, so a label event or a manual re-run is free;
+a new push, or a PR retargeted to another base, is reviewed again. It is off by default because it trusts the posted
+comment: with it on, a forged bot comment would skip the model as well as fool the hook, so only enable it where
+every other workflow's token is read-only.
 
 **Coverage is part of the verdict.** If the diff had to be cut or a changed file could not be shown in full, the run
 does not approve, whatever the model said, and the comment explains what was missing and how to fix it: raise the
